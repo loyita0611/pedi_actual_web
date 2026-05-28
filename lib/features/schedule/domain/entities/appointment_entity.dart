@@ -4,24 +4,34 @@ import 'package:equatable/equatable.dart';
 
 class AppointmentEntity extends Equatable {
   final String id;
-  final String patientId;
-  final String patientName;
-  final DateTime dateTime;
-  final String status; // 'pending', 'confirmed', 'cancelled', 'completed'
-  final String? notes;
-  final String serviceType; // Ej: 'Consulta General', 'Control Pediátrico'
+  final String patientName;       // Nombre y apellido del paciente (niño)
+  final DateTime patientBirthDate; // Fecha de nacimiento del niño
+  final String address;           // Dirección
+  final String representativeName;// Nombre y apellido del representante (adulto)
+  final String email;             // Correo electrónico de contacto
+  final DateTime appointmentDateTime; // Fecha y hora de la cita
+  final String status;            // 'pending', 'confirmed', 'cancelled'
 
   const AppointmentEntity({
     required this.id,
-    required this.patientId,
     required this.patientName,
-    required this.dateTime,
+    required this.patientBirthDate,
+    required this.address,
+    required this.representativeName,
+    required this.email,
+    required this.appointmentDateTime,
     required this.status,
-    this.notes,
-    required this.serviceType,
   });
 
-  // Equatable nos ayuda a comparar objetos por sus valores en los Blocs/State Management
   @override
-  List<Object?> get props => [id, patientId, patientName, dateTime, status, notes, serviceType];
+  List<Object?> get props => [
+        id,
+        patientName,
+        patientBirthDate,
+        address,
+        representativeName,
+        email,
+        appointmentDateTime,
+        status,
+      ];
 }
