@@ -1,11 +1,9 @@
 // lib/main.dart
 
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:flutter_localizations/flutter_localizations.dart'; 
-import 'package:pedia_actual/features/schedule/presentation/pages/schedule_page.dart';
-import 'package:pedia_actual/features/schedule/presentation/bloc/schedule_bloc.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:pedia_actual/features/schedule/presentation/pages/main_layout_page.dart'; 
 import 'package:pedia_actual/firebase_options.dart';
 import 'injection_container.dart' as di; // Importamos con alias Dependency Injection
 
@@ -37,7 +35,6 @@ class MyApp extends StatelessWidget {
       ),
       
       // CONFIGURACIÓN DE IDIOMA (LOCALIZATION)
-      // Estos delegados le enseñan a los componentes nativos (como el calendario) a hablar español
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
@@ -52,10 +49,7 @@ class MyApp extends StatelessWidget {
       locale: const Locale('es', ''),
 
       // Envolvemos el home con el BlocProvider inyectado con GetIt
-      home: BlocProvider(
-        create: (_) => di.sl<ScheduleBloc>(),
-        child: const SchedulePage(),
-      ),
+      home: const MainLayoutPage(),
     );
   }
 }
