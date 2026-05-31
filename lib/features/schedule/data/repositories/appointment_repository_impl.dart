@@ -12,41 +12,24 @@ class AppointmentRepositoryImpl implements AppointmentRepository {
 
   @override
   Future<List<AppointmentEntity>> getAppointmentsByDate(DateTime date) async {
-    try {
-      // Llamamos a la fuente de datos y retornamos la lista (los modelos son entidades de forma implícita)
-      return await remoteDataSource.getAppointmentsByDate(date);
-    } catch (e) {
-      // Aquí podrías lanzar una excepción personalizada de tu core (ej: ServerException())
-      throw Exception('Error al obtener las citas de Firestore: $e');
-    }
+    // Buscamos los modelos desde Firebase y los retornamos (Dart los castsea automáticamente a Entity)
+    return await remoteDataSource.getAppointmentsByDate(date);
   }
 
   @override
   Future<void> bookAppointment(AppointmentEntity appointment) async {
-    try {
-      // Convertimos la entidad pura en un modelo para poder usar el .toJson()
-      final model = AppointmentModel(
-        id: appointment.id,
-        patientName: appointment.patientName,
-        patientBirthDate: appointment.patientBirthDate,
-        address: appointment.address,
-        representativeName: appointment.representativeName,
-        email: appointment.email,
-        appointmentDateTime: appointment.appointmentDateTime,
-        status: appointment.status,
-      );
-      return await remoteDataSource.bookAppointment(model);
-    } catch (e) {
-      throw Exception('Error al reservar la cita en Firestore: $e');
-    }
-  }
+    // Convertimos la Entidad que viene de la UI en un Modelo serializable para Firebase
+    final appointmentModel = AppointmentModel(
+      id: appointment.id,
+      patientName: appointment.patientName,
+      patientBirthDate: appointment.patientBirthDate,
+      address: appointment.address,
+      representativeName: appointment.representativeName,
+      email: appointment.email,
+      appointmentDateTime: appointment.appointmentDateTime,
+      status: appointment.status,
+    );
 
-  @override
-  Future<void> cancelAppointment(String appointmentId) async {
-    try {
-      return await remoteDataSource.cancelAppointment(appointmentId);
-    } catch (e) {
-      throw Exception('Error al cancelar la cita en Firestore: $e');
-    }
+    return await remoteDataSource.bookAppointment(appointmentModel);
   }
 }

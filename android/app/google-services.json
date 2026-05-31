@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "262597705275",
+    "project_id": "pediactual-ee23b",
+    "storage_bucket": "pediactual-ee23b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:262597705275:android:acd67589b0dc9187d8a61e",
+        "android_client_info": {
+          "package_name": "com.example.pedia_actual"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDiyC6Q-SKvEHjDIbLNU9QNfXeme5W0VJw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

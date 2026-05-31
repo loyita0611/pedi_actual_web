@@ -16,16 +16,17 @@ class AppointmentRemoteDataSourceImpl implements AppointmentRemoteDataSource {
 
   @override
   Future<List<AppointmentModel>> getAppointmentsByDate(DateTime date) async {
-    // Definimos el inicio y fin del día para filtrar correctamente en Firestore
+    // Calculamos el inicio y fin del día seleccionado para el filtro de Firestore
     final startOfDay = DateTime(date.year, date.month, date.day, 0, 0, 0);
     final endOfDay = DateTime(date.year, date.month, date.day, 23, 59, 59);
 
     final snapshot = await firestore
         .collection('appointments')
-        .where('dateTime', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
-        .where('dateTime', isLessThanOrEqualTo: Timestamp.fromDate(endOfDay))
+        .where('appointmentDateTime', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
+        .where('appointmentDateTime', isLessThanOrEqualTo: Timestamp.fromDate(endOfDay))
         .get();
 
+    // Mapeamos los documentos devueltos por Firebase a nuestro AppointmentModel
     return snapshot.docs
         .map((doc) => AppointmentModel.fromJson(doc.data(), doc.id))
         .toList();
@@ -33,15 +34,20 @@ class AppointmentRemoteDataSourceImpl implements AppointmentRemoteDataSource {
 
   @override
   Future<void> bookAppointment(AppointmentModel appointment) async {
-    // Guardamos el documento en la colección de Firestore
+    // Agregamos un nuevo documento. Firestore generará el ID automáticamente.
     await firestore.collection('appointments').add(appointment.toJson());
   }
 
   @override
   Future<void> cancelAppointment(String appointmentId) async {
-    // Actualizamos el estado de la cita a 'cancelled'
-    await firestore.collection('appointments').doc(appointmentId).update({
-      'status': 'cancelled',
-    });
+    try {
+      await firestore
+          .collection('appointments')
+          .doc(appointmentId)
+          .update({'status': 'cancelled'});
+    } catch (e) {
+      //throw ServerException(); // O el manejo de excepciones que tengas configurado
+    }
   }
+
 }

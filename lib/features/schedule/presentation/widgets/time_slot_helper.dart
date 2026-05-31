@@ -51,11 +51,11 @@ class TimeSlotHelper {
       // 2. Comprobar si ya existe una cita en Firebase para este bloque exacto de hora y fecha
       // Nota: Comparamos año, mes, día, hora y minuto.
       final bool occupied = bookedAppointments.any((appointment) =>
-          appointment.dateTime.year == currentSlot.year &&
-          appointment.dateTime.month == currentSlot.month &&
-          appointment.dateTime.day == currentSlot.day &&
-          appointment.dateTime.hour == currentSlot.hour &&
-          appointment.dateTime.minute == currentSlot.minute &&
+          appointment.appointmentDateTime.year == currentSlot.year &&
+          appointment.appointmentDateTime.month == currentSlot.month &&
+          appointment.appointmentDateTime.day == currentSlot.day &&
+          appointment.appointmentDateTime.hour == currentSlot.hour &&
+          appointment.appointmentDateTime.minute == currentSlot.minute &&
           appointment.status != 'cancelled'); // Ignoramos las canceladas
 
       // 3. Añadir el bloque procesado a nuestra lista

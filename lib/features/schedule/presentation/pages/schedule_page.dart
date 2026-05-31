@@ -27,7 +27,6 @@ class _SchedulePageState extends State<SchedulePage> {
         backgroundColor: Colors.teal,
       ),
       body: BlocConsumer<ScheduleBloc, ScheduleState>(
-        // El listener reacciona a estados de "acción única" (como alertas, diálogos o navegaciones)
         listener: (context, state) {
           if (state is AppointmentBookingInProgress) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -44,9 +43,9 @@ class _SchedulePageState extends State<SchedulePage> {
                 backgroundColor: Colors.green,
               ),
             );
+            context.read<ScheduleBloc>().add(LoadAppointmentsForDate(_focusedDay));
           }
         },
-        // El builder se encarga puramente de renderizar los elementos visuales estables
         builder: (context, state) {
           if (state is ScheduleInitial) {
             context.read<ScheduleBloc>().add(LoadAppointmentsForDate(_focusedDay));
@@ -61,7 +60,6 @@ class _SchedulePageState extends State<SchedulePage> {
             return Center(child: Text('Error: ${state.message}'));
           }
 
-          // Si está guardando, mantenemos la interfaz anterior visible pero bloqueada
           if (state is ScheduleLoaded) {
             return LayoutBuilder(
               builder: (context, constraints) {
@@ -80,24 +78,21 @@ class _SchedulePageState extends State<SchedulePage> {
     );
   }
 
-  // --- DISEÑO PARA ESCRITORIO (Estilo NeoGaleno) ---
+  // --- DISEÑO PARA ESCRITORIO ---
   Widget _buildDesktopLayout(ScheduleLoaded state) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Columna Izquierda: Selector de fecha / Mini Calendario
         SizedBox(
           width: 300,
           child: Card(
             margin: const EdgeInsets.all(16),
             child: Padding(
               padding: const EdgeInsets.all(16),
-              key: const Key('calendar_desktop'),
               child: _buildCalendar(),
             ),
           ),
         ),
-        // Columna Derecha: Grid de bloques de horarios disponibles
         Expanded(
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -126,17 +121,15 @@ class _SchedulePageState extends State<SchedulePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // El calendario se posiciona arriba en móvil
             _buildCalendar(),
             const SizedBox(height: 24),
-            Text(
+            const Text(
               'Horarios disponibles:',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
-            // Ajustamos el grid a solo 2 columnas en pantallas pequeñas
             SizedBox(
-              height: 400, // Altura fija simulada para el scroll interno
+              height: 400,
               child: _buildTimeSlotsGrid(state, crossAxisCount: 2),
             ),
           ],
@@ -145,15 +138,13 @@ class _SchedulePageState extends State<SchedulePage> {
     );
   }
 
+  // --- WIDGET CALENDARIO INTERACTIVO ---
   Widget _buildCalendar() {
     return TableCalendar(
-      // Configuración de idioma y rangos de fechas
-      locale: 'es_ES', // Opcional: para poner los días en español (requiere inicializar intl)
-      firstDay: DateTime.now().subtract(const Duration(days: 365)), // Un año atrás
-      lastDay: DateTime.now().add(const Duration(days: 365)),      // Un año adelante
+      locale: 'es_ES',
+      firstDay: DateTime.now().subtract(const Duration(days: 365)),
+      lastDay: DateTime.now().add(const Duration(days: 365)),
       focusedDay: _focusedDay,
-      
-      // Configuración de estilos visuales para que combine con Pediactual (Teal)
       calendarStyle: CalendarStyle(
         selectedDecoration: const BoxDecoration(
           color: Colors.teal,
@@ -166,39 +157,31 @@ class _SchedulePageState extends State<SchedulePage> {
         outsideDaysVisible: false,
       ),
       headerStyle: const HeaderStyle(
-        formatButtonVisible: false, // Oculta el botón de "2 semanas" o "mes" para dejarlo simple
+        formatButtonVisible: false,
         titleCentered: true,
         titleTextStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
       ),
-
-      // Lógica para saber qué día está marcado como seleccionado
       selectedDayPredicate: (day) {
         return isSameDay(_focusedDay, day);
       },
-
-      // Lógica cuando el usuario hace clic en un día del calendario
       onDaySelected: (selectedDay, focusedDay) {
         if (!isSameDay(_focusedDay, selectedDay)) {
           setState(() {
             _focusedDay = selectedDay;
           });
-          
-          // ¡Crucial! Al cambiar el día, le avisamos al BLoC para que vaya a Firebase 
-          // y traiga las citas de esta nueva fecha de inmediato.
           context.read<ScheduleBloc>().add(LoadAppointmentsForDate(selectedDay));
         }
       },
     );
   }
 
-  // --- EL GRID DE HORARIOS (Crucial para la experiencia visual) ---
+  // --- GRID DE HORARIOS ---
   Widget _buildTimeSlotsGrid(ScheduleLoaded state, {required int crossAxisCount}) {
-    // ¡Aquí está la magia! Generamos los bloques en tiempo real combinando el día con Firestore
     final List<TimeSlotModel> calculatedSlots = TimeSlotHelper.generateSlotsForDate(
       selectedDate: state.selectedDate,
       bookedAppointments: state.appointments,
-      startHour: 8,       // Puedes cambiarlo dinámicamente si el médico tiene otro horario
-      endHour: 17,       // Hasta las 5:00 PM
+      startHour: 8,       
+      endHour: 17,       
       intervalMinutes: 30,
     );
 
@@ -218,9 +201,11 @@ class _SchedulePageState extends State<SchedulePage> {
         final slot = calculatedSlots[index];
 
         return InkWell(
-          onPressed: slot.isOccupied 
-            ? null // Queda completamente bloqueado si ya está ocupado
-            : () => _showBookingDialog(slot.timeString, slot.dateTime),
+          onTap: () {
+            if (!slot.isOccupied) {
+              _showBookingDialog(slot.timeString, slot.dateTime);
+            }
+          },
           borderRadius: BorderRadius.circular(8),
           child: Container(
             decoration: BoxDecoration(
@@ -228,7 +213,7 @@ class _SchedulePageState extends State<SchedulePage> {
               border: Border.all(color: slot.isOccupied ? Colors.grey : Colors.teal),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Center(
+            child: Center( 
               child: Text(
                 slot.timeString,
                 style: TextStyle(
@@ -244,21 +229,23 @@ class _SchedulePageState extends State<SchedulePage> {
     );
   }
 
+  // --- FORMULARIO REGISTRO MEDICO EN MODAL ---
   void _showBookingDialog(String timeString, DateTime appointmentDateTime) {
     final formKey = GlobalKey<FormState>();
-    
-    // Controladores para capturar el texto de los inputs
     final patientNameController = TextEditingController();
     final addressController = TextEditingController();
     final representativeNameController = TextEditingController();
     final emailController = TextEditingController();
-    
     DateTime? selectedBirthDate;
+
+    // 🚀 CAPTURAMOS EL BLOC ANTES DE ENTRAR AL MODAL
+    // Guardamos la instancia del BLoC que sí vive en el contexto válido de SchedulePage
+    final scheduleBloc = context.read<ScheduleBloc>();
 
     showDialog(
       context: context,
-      builder: (context) {
-        return StatefulBuilder( // Nos permite manejar el estado del selector de fecha dentro del modal
+      builder: (dialogContext) { // Cambiamos el nombre a dialogContext para no confundir
+        return StatefulBuilder( 
           builder: (context, setModalState) {
             return AlertDialog(
               title: Row(
@@ -274,7 +261,7 @@ class _SchedulePageState extends State<SchedulePage> {
                 ],
               ),
               content: SizedBox(
-                width: 500, // Ancho ideal para la versión Web de escritorio
+                width: 500, 
                 child: SingleChildScrollView(
                   child: Form(
                     key: formKey,
@@ -283,8 +270,6 @@ class _SchedulePageState extends State<SchedulePage> {
                       children: [
                         const Divider(),
                         const SizedBox(height: 8),
-                        
-                        // 1. Nombre del Paciente
                         TextFormField(
                           controller: patientNameController,
                           decoration: const InputDecoration(
@@ -295,23 +280,7 @@ class _SchedulePageState extends State<SchedulePage> {
                           validator: (value) => value!.isEmpty ? 'Por favor ingresa el nombre del niño' : null,
                         ),
                         const SizedBox(height: 16),
-
-                        // 2. Fecha de Nacimiento del Paciente
-                        ListTile(
-                          leading: const Icon(Icons.cake_outlined, color: Colors.teal),
-                          title: Text(
-                            selectedBirthDate == null
-                                ? 'Fecha de Nacimiento'
-                                : 'Nacido el: ${selectedBirthDate!.day}/${selectedBirthDate!.month}/${selectedBirthDate!.year}',
-                          ),
-                          subtitle: selectedBirthDate == null 
-                              ? const Text('Selecciona la fecha', style: TextStyle(color: Colors.redHorizontal)) 
-                              : null,
-                          trailing: const Icon(Icons.arrow_drop_down),
-                          shape: RoundedRectangleBorder(
-                            side: const BorderSide(color: Colors.grey),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
+                        InkWell(
                           onTap: () async {
                             final DateTime? picked = await showDatePicker(
                               context: context,
@@ -325,10 +294,21 @@ class _SchedulePageState extends State<SchedulePage> {
                               });
                             }
                           },
+                          child: InputDecorator(
+                            decoration: InputDecoration(
+                              labelText: 'Fecha de Nacimiento',
+                              prefixIcon: const Icon(Icons.cake_outlined, color: Colors.teal),
+                              border: const OutlineInputBorder(),
+                              errorText: selectedBirthDate == null ? 'Selecciona la fecha' : null,
+                            ),
+                            child: Text(
+                              selectedBirthDate == null
+                                  ? ''
+                                  : '${selectedBirthDate!.day}/${selectedBirthDate!.month}/${selectedBirthDate!.year}',
+                            ),
+                          ),
                         ),
                         const SizedBox(height: 16),
-
-                        // 3. Dirección
                         TextFormField(
                           controller: addressController,
                           decoration: const InputDecoration(
@@ -339,8 +319,6 @@ class _SchedulePageState extends State<SchedulePage> {
                           validator: (value) => value!.isEmpty ? 'Por favor ingresa la dirección' : null,
                         ),
                         const SizedBox(height: 16),
-
-                        // 4. Nombre del Representante
                         TextFormField(
                           controller: representativeNameController,
                           decoration: const InputDecoration(
@@ -351,8 +329,6 @@ class _SchedulePageState extends State<SchedulePage> {
                           validator: (value) => value!.isEmpty ? 'Por favor ingresa el nombre del representante' : null,
                         ),
                         const SizedBox(height: 16),
-
-                        // 5. Correo Electrónico
                         TextFormField(
                           controller: emailController,
                           keyboardType: TextInputType.emailAddress,
@@ -376,35 +352,29 @@ class _SchedulePageState extends State<SchedulePage> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.pop(context),
+                  onPressed: () => Navigator.pop(dialogContext),
                   child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
                   onPressed: () {
-                    // Validamos el formulario y que la fecha de nacimiento no esté vacía
                     if (formKey.currentState!.validate() && selectedBirthDate != null) {
-                      
-                      // Creamos la nueva entidad con los datos del formulario
                       final newAppointment = AppointmentEntity(
-                        id: '', // Firestore generará el ID automáticamente al hacer el .add()
+                        id: '', 
                         patientName: patientNameController.text.trim(),
                         patientBirthDate: selectedBirthDate!,
                         address: addressController.text.trim(),
                         representativeName: representativeNameController.text.trim(),
                         email: emailController.text.trim(),
-                        appointmentDateTime: appointmentDateTime, // Pasado desde el Grid de horarios
+                        appointmentDateTime: appointmentDateTime, 
                         status: 'pending',
                       );
 
-                      // Disparamos el evento al BLoC para guardar en Firebase
-                      context.read<ScheduleBloc>().add(BookNewAppointment(newAppointment));
-
-                      Navigator.pop(context);
+                      // 🚀 CONEXIÓN DIRECTA: Usamos la referencia que aislamos arriba en vez del context.read
+                      scheduleBloc.add(BookNewAppointment(newAppointment));
                       
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Procesando reserva médica...')),
-                      );
+                      // Cerramos usando el contexto del diálogo de forma segura
+                      Navigator.pop(dialogContext);
                     }
                   },
                   child: const Text('Registrar Cita'),
