@@ -35,7 +35,7 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
   // - UserRole.patient
   final CurrentUser _user = CurrentUser(
     name: 'Dra. Marian Rosales',
-    role: UserRole.doctor, 
+    role: UserRole.secretary, 
   );
 
   late final List<Widget> _pages;
@@ -59,7 +59,7 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
 
   @override
   Widget build(BuildContext context) {
-    final Color sidebarColor = const Color(0xFF4594A4);
+    const Color sidebarColor = Color(0xFF4594A4);
 
     return Scaffold(
       body: Row(
