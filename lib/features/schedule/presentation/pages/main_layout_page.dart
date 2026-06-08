@@ -19,7 +19,9 @@ class CurrentUser {
 }
 
 class MainLayoutPage extends StatefulWidget {
-  const MainLayoutPage({super.key});
+  final CurrentUser currentUser;
+
+  const MainLayoutPage({super.key, required this.currentUser});
 
   @override
   State<MainLayoutPage> createState() => _MainLayoutPageState();
@@ -27,22 +29,24 @@ class MainLayoutPage extends StatefulWidget {
 
 class _MainLayoutPageState extends State<MainLayoutPage> {
   int _selectedIndex = 0;
+  late final CurrentUser _user;
 
   // 👤 SIMULACIÓN DE USUARIO LOGUEADO
   // Cambia el rol aquí para probar cómo muta la barra lateral automáticamente:
   // - UserRole.doctor
   // - UserRole.secretary
   // - UserRole.patient
-  final CurrentUser _user = CurrentUser(
-    name: 'Dra. Marian Rosales',
-    role: UserRole.secretary, 
-  );
+  // final CurrentUser _user = CurrentUser(
+  //   name: 'Dra. Marian Rosales',
+  //   role: UserRole.doctor, 
+  // );
 
   late final List<Widget> _pages;
 
   @override
   void initState() {
     super.initState();
+    _user = widget.currentUser;
     _pages = [
       BlocProvider(
         create: (_) => di.sl<ScheduleBloc>()..add(LoadAppointmentsForDate(DateTime.now())),

@@ -3,7 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:pedia_actual/features/schedule/presentation/pages/main_layout_page.dart'; 
+import 'package:pedia_actual/features/auth/presentation/pages/login_page.dart';
 import 'package:pedia_actual/firebase_options.dart';
 import 'injection_container.dart' as di; // Importamos con alias Dependency Injection
 
@@ -49,7 +49,7 @@ class MyApp extends StatelessWidget {
       locale: const Locale('es', ''),
 
       // Envolvemos el home con el BlocProvider inyectado con GetIt
-      home: const MainLayoutPage(),
+      home: const LoginPage(),
     );
   }
 }
