@@ -1,5 +1,6 @@
 // lib/features/schedule/presentation/widgets/booking_dialog.dart
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../../domain/entities/appointment_entity.dart';
@@ -443,8 +444,10 @@ class _BookingDialogState extends State<BookingDialog> {
       }
     } else if (_currentStep == 2) {
       setState(() { _currentStep = 3; });
-    } else {
+    // ... Código anterior del método ...
+   }  else {
       if (_paymentFormKey.currentState!.validate()) {
+        // 1. Creamos la entidad local original del dominio
         final newAppointment = AppointmentEntity(
           id: '',
           patientName: _patientNameController.text.trim(),
@@ -455,9 +458,65 @@ class _BookingDialogState extends State<BookingDialog> {
           appointmentDateTime: widget.appointmentDateTime,
           status: 'pending',
         );
+
+        final String correoPaciente = _emailController.text.trim();
+        final String nombrePaciente = _patientNameController.text.trim();
+        final String fechaCitaStr = "${widget.appointmentDateTime.day}/${widget.appointmentDateTime.month}/${widget.appointmentDateTime.year}";
+        final String horaCitaStr = widget.timeString;
+        const String numeroDoctora = "+58 412-5555555"; 
+
+        // 2. Guardamos el respaldo en Firestore (Se queda en tu Plan Spark Gratis)
+        FirebaseFirestore.instance.collection('pagos').add({
+          'nombrePaciente': nombrePaciente,
+          'emailPaciente': correoPaciente,
+          'fechaCita': fechaCitaStr,
+          'horaCita': horaCitaStr,
+          'telefonoDoctora': numeroDoctora,
+          'bancoEmisor': _selectedOriginBank,
+          'cedulaTitular': _senderIdController.text.trim(),
+          'montoBs': _amountPaidController.text.trim(),
+          'referencia': _referenceController.text.trim(),
+          'metodoPago': _selectedPaymentMethod,
+          'fechaRegistro': FieldValue.serverTimestamp(),
+          'estado': 'pending',
+        }).then((docRef) {
+          debugPrint("¡Respaldo de pago guardado en Firestore ID: ${docRef.id}!");
+        }).catchError((error) {
+          debugPrint("Error respaldando en Firestore: $error");
+        });
+
+        // 3. ENVÍO DIRECTO DEL CORREO DESDE FLUTTER (Con tus credenciales reales)
+        final urlCorreo = Uri.parse('https://api.emailjs.com/api/v1.0/email/send');
+        
+        http.post(
+          urlCorreo,
+          headers: {'Content-Type': 'application/json'},
+          body: json.encode({
+            'service_id': 'service_vfquxn8',       // 👈 Tu Service ID de Gmail
+            'template_id': 'template_brfi9f5',      // 👈 Tu Template ID
+            'user_id': 'wC6RQuuJG9ZfdQxp9',        // 👈 Tu Public Key
+            'template_params': {
+              'to_email': correoPaciente,
+              'patient_name': nombrePaciente,
+              'appointment_date': fechaCitaStr,
+              'appointment_time': horaCitaStr,
+              'doctor_phone': numeroDoctora,
+            }
+          }),
+        ).then((response) {
+          if (response.statusCode == 200) {
+            debugPrint("¡Correo enviado exitosamente al paciente!");
+          } else {
+            debugPrint("Error de API de correo: ${response.body}");
+          }
+        }).catchError((e) {
+          debugPrint("Error enviando HTTP de correo: $e");
+        });
+
+        // Ejecuta el flujo original de tu App y cierra el diálogo
         widget.onConfirmBooking(newAppointment);
         Navigator.pop(context);
       }
     }
-  }
+  } 
 }
