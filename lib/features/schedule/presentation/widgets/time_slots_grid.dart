@@ -42,25 +42,39 @@ class TimeSlotsGrid extends StatelessWidget {
       itemBuilder: (context, index) {
         final slot = calculatedSlots[index];
 
+        // 🌍 Comprobación de ocupación usando la hora local (.toLocal())
+        final bool isCurrentlyOccupied = appointments.any((a) {
+          final appLocal = a.appointmentDateTime.toLocal();
+          final slotLocal = slot.dateTime.toLocal();
+          return appLocal.hour == slotLocal.hour && appLocal.minute == slotLocal.minute;
+        });
+
         AppointmentEntity? realAppointment;
-        if (slot.isOccupied) {
-          realAppointment = appointments.firstWhere(
-            (a) => a.appointmentDateTime.hour == slot.dateTime.hour && a.appointmentDateTime.minute == slot.dateTime.minute,
-          );
+        if (isCurrentlyOccupied) {
+          // 🔥 SOLUCIÓN: Usamos un bucle for-in clásico para evitar el 'firstWhere' con 'orElse'.
+          // Esto elimina por completo el TypeError de subtipos entre AppointmentEntity y AppointmentModel.
+          for (final a in appointments) {
+            final appLocal = a.appointmentDateTime.toLocal();
+            final slotLocal = slot.dateTime.toLocal();
+            if (appLocal.hour == slotLocal.hour && appLocal.minute == slotLocal.minute) {
+              realAppointment = a;
+              break; // Ya lo encontramos, salimos del bucle
+            }
+          }
         }
 
         return Tooltip(
-          message: slot.isOccupied
+          message: isCurrentlyOccupied
               ? "Paciente: ${realAppointment?.patientName}\nAgendado para: ${slot.timeString}"
               : "Horario Disponible",
           preferBelow: false,
           child: InkWell(
-            onTap: slot.isOccupied ? null : () => onSlotSelected(slot.timeString, slot.dateTime),
+            onTap: isCurrentlyOccupied ? null : () => onSlotSelected(slot.timeString, slot.dateTime),
             borderRadius: BorderRadius.circular(8),
             child: Container(
               decoration: BoxDecoration(
-                color: slot.isOccupied ? Colors.grey[300] : Colors.teal[50],
-                border: Border.all(color: slot.isOccupied ? Colors.grey : Colors.teal),
+                color: isCurrentlyOccupied ? Colors.grey[300] : Colors.teal[50],
+                border: Border.all(color: isCurrentlyOccupied ? Colors.grey : Colors.teal),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Center(
@@ -68,8 +82,8 @@ class TimeSlotsGrid extends StatelessWidget {
                   slot.timeString,
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
-                    color: slot.isOccupied ? Colors.grey[600] : Colors.teal[900],
-                    decoration: slot.isOccupied ? TextDecoration.lineThrough : null,
+                    color: isCurrentlyOccupied ? Colors.grey[600] : Colors.teal[900],
+                    decoration: isCurrentlyOccupied ? TextDecoration.lineThrough : null,
                   ),
                 ),
               ),

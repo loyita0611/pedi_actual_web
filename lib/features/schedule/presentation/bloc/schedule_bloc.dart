@@ -2,13 +2,14 @@
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../domain/usecases/get_appointments_by_date.dart';
-import '../../domain/usecases/book_appointment.dart'; // Importamos el nuevo caso de uso
+import '../../domain/usecases/book_appointment.dart'; 
+import '../../domain/entities/appointment_entity.dart';
 import 'schedule_event.dart';
 import 'schedule_state.dart';
 
 class ScheduleBloc extends Bloc<ScheduleEvent, ScheduleState> {
   final GetAppointmentsByDate getAppointmentsByDate;
-  final BookAppointment bookAppointment; // Inyectamos el caso de uso para agendar
+  final BookAppointment bookAppointment; 
 
   ScheduleBloc({
     required this.getAppointmentsByDate,
@@ -26,24 +27,34 @@ class ScheduleBloc extends Bloc<ScheduleEvent, ScheduleState> {
       }
     });
 
-    // 2. Manejador para Registrar Nueva Cita Pediátrica
+    // 2. Manejador para Registrar Nueva Cita Pediátrica (Actualización Optimista)
     on<BookNewAppointment>((event, emit) async {
-      // Guardamos una referencia de la fecha actual que se estaba viendo para poder recargarla después
       final DateTime currentDate = event.appointment.appointmentDateTime;
+      final currentState = state;
 
-      emit(AppointmentBookingInProgress()); // Estado de "Guardando..." para bloquear botones o mostrar barra
+      // Guardamos el estado anterior por seguridad en caso de error
+      List<AppointmentEntity> oldAppointments = []; 
+      if (currentState is ScheduleLoaded) {
+        oldAppointments = currentState.appointments;
+      }
+
+      emit(AppointmentBookingInProgress()); 
       
       try {
-        // Llamamos al caso de uso (que se comunica con Repository e implementa Firestore)
+        // 1. Enviamos la petición de guardado a Firestore y esperamos la confirmación del servidor
         await bookAppointment(event.appointment);
         
-        emit(AppointmentBookedSuccess()); // Emitimos éxito temporalmente
+        // 2. 🚀 SOLUCIÓN: En lugar de re-consultar a Firebase (que puede devolver datos de caché viejos),
+        // creamos una nueva lista local combinando las citas anteriores con la nueva entidad insertada.
+        final List<AppointmentEntity> localUpdatedAppointments = List.from(oldAppointments)
+          ..add(event.appointment);
 
-        // ¡Estrategia clave! Volvemos a disparar automáticamente la carga de citas del día.
-        // Esto hace que el grid de horarios se actualice solo y pinte el nuevo turno en gris de inmediato.
-        add(LoadAppointmentsForDate(currentDate));
+        // 3. Emitimos directamente el nuevo estado con los datos actualizados localmente en tiempo real
+        emit(ScheduleLoaded(appointments: localUpdatedAppointments, selectedDate: currentDate));
         
       } catch (e) {
+        // Si la inserción en Firebase falla por red o permisos, revertimos la UI al estado previo seguro
+        emit(ScheduleLoaded(appointments: oldAppointments, selectedDate: currentDate));
         emit(ScheduleError('Error al guardar la cita: ${e.toString()}'));
       }
     });

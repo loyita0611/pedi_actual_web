@@ -28,9 +28,8 @@ class MainLayoutPage extends StatefulWidget {
 }
 
 class _MainLayoutPageState extends State<MainLayoutPage> {
-  late int _selectedIndex; // Quitamos el = 0 fijo para hacerlo dinámico
+  late int _selectedIndex; 
   late final CurrentUser _user;
-  late final List<Widget> _pages;
 
   @override
   void initState() {
@@ -38,32 +37,46 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
     _user = widget.currentUser;
 
     // 🚀 REDIRECCIÓN AL INICIAR SESIÓN SEGÚN EL ROL:
-    // Si es Paciente, abre directo en la Cartelera Informativa (Índice 7). 
-    // Si es Doctor o Secretaria, abre en la Agenda (Índice 0).
     if (_user.role == UserRole.patient) {
       _selectedIndex = 7;
     } else {
       _selectedIndex = 0;
     }
+  }
 
-    _pages = [
-      // 📅 ÍNDICE 0: Agendar Cita / Agenda
-      BlocProvider(
-        create: (_) => di.sl<ScheduleBloc>()..add(LoadAppointmentsForDate(DateTime.now())),
-        child: const SchedulePage(),
-      ),
-      /* 1 */ const Center(child: Text('Módulo de Pacientes', style: TextStyle(fontSize: 24))),
-      /* 2 */ const Center(child: Text('Módulo de Consultas / Historial', style: TextStyle(fontSize: 24))),
-      /* 3 */ const Center(child: Text('Módulo de Pagos', style: TextStyle(fontSize: 24))),
-      /* 4 */ const Center(child: Text('Módulo de Estadísticas y Reportes', style: TextStyle(fontSize: 24))),
-      /* 5 */ const Center(child: Text('Módulo de Configuración de la Vista de Paciente', style: TextStyle(fontSize: 24))),
-      
-      // 📱 ÍNDICE 6: Pantalla exclusiva de Contacto
-      _buildOnlyContactPage(),
+  // 🔄 GENERADOR DINÁMICO DE PÁGINAS: Refresca el Bloc y el estado al cambiar de pestaña
+  Widget _getPageByIndex(int index) {
+    switch (index) {
+      case 0:
+        // 📅 Índice 0: Agenda - Genera un BlocProvider fresco cada vez que se accede
+        return BlocProvider(
+          create: (_) => di.sl<ScheduleBloc>()..add(LoadAppointmentsForDate(DateTime.now())),
+          child: const SchedulePage(),
+        );
+      case 1:
+        return const Center(child: Text('Módulo de Pacientes', style: TextStyle(fontSize: 24)));
+      case 2:
+        return const Center(child: Text('Módulo de Consultas / Historial', style: TextStyle(fontSize: 24)));
+      case 3:
+        return const Center(child: Text('Módulo de Pagos', style: TextStyle(fontSize: 24)));
+      case 4:
+        return const Center(child: Text('Módulo de Estadísticas y Reportes', style: TextStyle(fontSize: 24)));
+      case 5:
+        return const Center(child: Text('Módulo de Configuración de la Vista de Paciente', style: TextStyle(fontSize: 24)));
+      case 6:
+        return _buildOnlyContactPage();
+      case 7:
+        return _buildPatientInfoPage();
+      default:
+        return BlocProvider(
+          create: (_) => di.sl<ScheduleBloc>()..add(LoadAppointmentsForDate(DateTime.now())),
+          child: const SchedulePage(),
+        );
+    }
+  }
 
-      // 📢 ÍNDICE 7: Pantalla exclusiva de Información / Propaganda
-      _buildPatientInfoPage(),
-    ];
+  Widget _getFilteredPage() {
+    return _getPageByIndex(_selectedIndex);
   }
 
   @override
@@ -169,13 +182,6 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
         break;
     }
     return menuItems;
-  }
-
-  Widget _getFilteredPage() {
-    if (_selectedIndex >= 0 && _selectedIndex < _pages.length) {
-      return _pages[_selectedIndex];
-    }
-    return _pages[0];
   }
 
   Widget _buildSidebarItem({required IconData icon, required String title, required int pageIndex}) {

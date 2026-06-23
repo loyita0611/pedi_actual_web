@@ -88,7 +88,14 @@ class _SchedulePageState extends State<SchedulePage> {
                   ),
                 ),
               ),
-              Expanded(child: DailyAppointmentsList(appointments: state.appointments)),
+              Expanded(
+                child: DailyAppointmentsList(
+                  appointments: state.appointments,
+                  onRefresh: () {
+                    context.read<ScheduleBloc>().add(LoadAppointmentsForDate(state.selectedDate));
+                  },
+                ),
+              ),
             ],
           ),
         ),
@@ -142,7 +149,7 @@ class _SchedulePageState extends State<SchedulePage> {
                 selectedDate: state.selectedDate,
                 appointments: state.appointments,
                 crossAxisCount: 2,
-                onSlotSelected: _openBookingDialog,
+                onSlotSelected: _openBookingDialog, // También responde al método asíncrono
               ),
             ),
           ],
@@ -158,8 +165,9 @@ class _SchedulePageState extends State<SchedulePage> {
     context.read<ScheduleBloc>().add(LoadAppointmentsForDate(selectedDay));
   }
 
-  void _openBookingDialog(String timeString, DateTime appointmentDateTime) {
-    showDialog(
+  // 🔄 MÉTODO ASÍNCRONO SINCRONIZADO: Espera el cierre del diálogo para recargar la grilla
+  void _openBookingDialog(String timeString, DateTime appointmentDateTime) async {
+    await showDialog(
       context: context,
       builder: (dialogContext) {
         return BookingDialog(
@@ -171,5 +179,10 @@ class _SchedulePageState extends State<SchedulePage> {
         );
       },
     );
+
+    // 🚀 Al cerrarse el modal (sea guardando o cancelando), forzamos al Bloc a refrescar el panel de fondo
+    if (mounted) {
+      context.read<ScheduleBloc>().add(LoadAppointmentsForDate(_focusedDay));
+    }
   }
 }

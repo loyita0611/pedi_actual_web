@@ -1,3 +1,4 @@
+// lib/features/schedule/presentation/widgets/daily_appointments_list.dart
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -5,21 +6,31 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../../domain/entities/appointment_entity.dart';
 
-class DailyAppointmentsList extends StatelessWidget {
+class DailyAppointmentsList extends StatefulWidget {
   final List<AppointmentEntity> appointments;
+  final VoidCallback? onRefresh; // 🔄 Callback para avisarle al padre que actualice la pantalla
 
-  const DailyAppointmentsList({super.key, required this.appointments});
+  const DailyAppointmentsList({
+    super.key, 
+    required this.appointments,
+    this.onRefresh, // 🔄 Lo recibimos aquí
+  });
+
+  @override
+  State<DailyAppointmentsList> createState() => _DailyAppointmentsListState();
+}
+
+class _DailyAppointmentsListState extends State<DailyAppointmentsList> {
 
   // 🛠️ 1. Diálogo de Confirmación de Seguridad
   Future<void> _mostrarConfirmacionGuardar({
-    required BuildContext context,
     required AppointmentEntity appointment,
     required String nuevaFechaStr,
     required String nuevaHoraStr,
   }) async {
     return showDialog(
       context: context,
-      builder: (BuildContext context) {
+      builder: (BuildContext dialogContext) {
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           title: const Row(
@@ -35,7 +46,7 @@ class DailyAppointmentsList extends StatelessWidget {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context), 
+              onPressed: () => Navigator.pop(dialogContext), 
               child: const Text('Cancelar', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
             ),
             ElevatedButton(
@@ -44,9 +55,8 @@ class DailyAppointmentsList extends StatelessWidget {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
               ),
               onPressed: () {
-                Navigator.pop(context); // Cierra la confirmación
+                Navigator.pop(dialogContext); 
                 _procesarReprogramacion(
-                  context: context,
                   appointment: appointment,
                   nuevaFechaStr: nuevaFechaStr,
                   nuevaHoraStr: nuevaHoraStr,
@@ -62,7 +72,6 @@ class DailyAppointmentsList extends StatelessWidget {
 
   // 🛠️ 2. Diálogo para elegir horarios (Detecta y bloquea ocupados)
   Future<void> _mostrarSelectorHorarios({
-    required BuildContext context,
     required AppointmentEntity appointment,
     required String nuevaFechaStr,
     required List<String> horasOcupadas, 
@@ -75,11 +84,11 @@ class DailyAppointmentsList extends StatelessWidget {
       "04:00 PM", "04:30 PM"
     ];
 
-    if (!context.mounted) return;
+    if (!mounted) return;
 
     showDialog(
       context: context,
-      builder: (BuildContext context) {
+      builder: (BuildContext dialogContext) {
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           title: Text(
@@ -101,7 +110,6 @@ class DailyAppointmentsList extends StatelessWidget {
               itemCount: horariosDisponibles.length,
               itemBuilder: (context, index) {
                 final horaSlot = horariosDisponibles[index];
-                
                 final bool estaOcupado = horasOcupadas.any((h) => h.trim().toUpperCase() == horaSlot.trim().toUpperCase());
                 
                 return OutlinedButton(
@@ -115,9 +123,8 @@ class DailyAppointmentsList extends StatelessWidget {
                     padding: EdgeInsets.zero, 
                   ),
                   onPressed: estaOcupado ? null : () {
-                    Navigator.pop(context); 
+                    Navigator.pop(dialogContext); 
                     _mostrarConfirmacionGuardar(
-                      context: context,
                       appointment: appointment,
                       nuevaFechaStr: nuevaFechaStr,
                       nuevaHoraStr: horaSlot,
@@ -138,7 +145,7 @@ class DailyAppointmentsList extends StatelessWidget {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () => Navigator.pop(dialogContext),
               child: const Text('Volver', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
             ),
           ],
@@ -147,108 +154,78 @@ class DailyAppointmentsList extends StatelessWidget {
     );
   }
 
-  // 🛠️ 3. Lógica de guardado blindada con TIMEOUT anti-congelamiento
+  // 🛠️ 3. Lógica de guardado en la nube de Firestore y EmailJS
   Future<void> _procesarReprogramacion({
-    required BuildContext context,
     required AppointmentEntity appointment,
     required String nuevaFechaStr,
     required String nuevaHoraStr,
   }) async {
-    // Levantamos la pantalla de carga inmediatamente
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator(color: Colors.teal)),
+      builder: (BuildContext dialogContext) => const Center(child: CircularProgressIndicator(color: Colors.teal)),
     );
 
-    bool actualizacionExitosa = false;
-
     try {
-      debugPrint("🔄 Buscando registro para: ${appointment.patientName}");
-
-      // ⏱️ Agregamos un timeout de 5 segundos. Si Firestore se congela, rompe el flujo para ir al finally.
       final querySnapshot = await FirebaseFirestore.instance
           .collection('pagos')
-          .where('nombrePaciente', isEqualTo: appointment.patientName.trim())
-          .get()
-          .timeout(const Duration(seconds: 5));
+          .where('nombrePaciente', isEqualTo: appointment.patientName)
+          .where('emailPaciente', isEqualTo: appointment.email)
+          .get();
 
       if (querySnapshot.docs.isNotEmpty) {
-        final docIdentificado = querySnapshot.docs.firstWhere(
-          (doc) => (doc.data()['emailPaciente'] as String? ?? '').trim().toLowerCase() == appointment.email.trim().toLowerCase(),
-          orElse: () => querySnapshot.docs.first,
-        );
+        final docId = querySnapshot.docs.first.id;
+        await FirebaseFirestore.instance.collection('pagos').doc(docId).update({
+          'fechaCita': nuevaFechaStr,
+          'horaCita': nuevaHoraStr,
+          'fechaActualizacion': FieldValue.serverTimestamp(),
+        });
+      }
 
-        debugPrint("📝 Modificando documento: ${docIdentificado.id}");
-        
-        await FirebaseFirestore.instance
-            .collection('pagos')
-            .doc(docIdentificado.id)
-            .update({
-              'fechaCita': nuevaFechaStr,
-              'horaCita': nuevaHoraStr,
-              'fechaActualizacion': FieldValue.serverTimestamp(),
-            })
-            .timeout(const Duration(seconds: 5)); // Timeout también en la escritura
-        
-        actualizacionExitosa = true;
+      final urlCorreo = Uri.parse('https://api.emailjs.com/api/v1.0/email/send');
+      await http.post(
+        urlCorreo,
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'service_id': 'service_vfquxn8',      
+          'template_id': 'template_brfi9f5',      
+          'user_id': 'wC6RQuuJG9ZfdQxp9',        
+          'template_params': {
+            'to_email': appointment.email,
+            'patient_name': appointment.patientName,
+            'appointment_date': "$nuevaFechaStr (REPROGRAMADA)", 
+            'appointment_time': "$nuevaHoraStr (NUEVO HORARIO)", 
+            'doctor_phone': "+58 412-5555555",    
+          }
+        }),
+      );
+
+      if (!mounted) return;
+      Navigator.pop(context); // Cierra el indicador de carga
+
+      // 🔄 Ejecutamos la recarga global del padre si fue proveída
+      if (widget.onRefresh != null) {
+        widget.onRefresh!();
       } else {
-        debugPrint("❌ No se encontró coincidencia exacta en Firestore.");
+        setState(() {}); 
       }
 
-      if (actualizacionExitosa) {
-        final urlCorreo = Uri.parse('https://api.emailjs.com/api/v1.0/email/send');
-        await http.post(
-          urlCorreo,
-          headers: {'Content-Type': 'application/json'},
-          body: json.encode({
-            'service_id': 'service_vfquxn8',       
-            'template_id': 'template_brfi9f5',      
-            'user_id': 'wC6RQuuJG9ZfdQxp9',        
-            'template_params': {
-              'to_email': appointment.email,
-              'patient_name': appointment.patientName,
-              'appointment_date': "$nuevaFechaStr (REPROGRAMADA)", 
-              'appointment_time': "$nuevaHoraStr (NUEVO HORARIO)", 
-              'doctor_phone': "+58 412-5555555",    
-            }
-          }),
-        ).timeout(const Duration(seconds: 4));
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('¡Cita de ${appointment.patientName} actualizada con éxito!'),
+          backgroundColor: Colors.teal,
+        ),
+      );
 
     } catch (e) {
-      debugPrint("🚨 Error capturado (o Timeout excedido): $e");
-    } finally {
-      // 🔓 Cierre forzado del Spinner usando una validación doble de navegación
-      if (context.mounted) {
-        debugPrint("🔓 Ejecutando pop forzado de la pantalla de carga.");
-        Navigator.pop(context); 
-      }
-
-      // Render de la barra informativa según estado
-      if (context.mounted) {
-        if (actualizacionExitosa) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('¡Cita de ${appointment.patientName} actualizada con éxito!'),
-              backgroundColor: Colors.teal,
-            ),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Error o Tiempo de espera agotado. No se modificó la base de datos.'),
-              backgroundColor: Colors.redAccent,
-            ),
-          );
-        }
-      }
+      if (!mounted) return;
+      Navigator.pop(context);
+      debugPrint("Error executing rescheduling: $e");
     }
   }
 
-  // 🛠️ 4. Gatillo al pulsar el lápiz de edición
+  // 🛠️ 4. Gatillo al pulsar el lápiz
   Future<void> _reprogramarCita({
-    required BuildContext context,
     required AppointmentEntity appointment,
   }) async {
     final DateTime? nuevaFecha = await showDatePicker(
@@ -270,46 +247,38 @@ class DailyAppointmentsList extends StatelessWidget {
 
     final String nuevaFechaStr = "${nuevaFecha.day}/${nuevaFecha.month}/${nuevaFecha.year}";
 
-    if (!context.mounted) return;
+    if (!mounted) return;
+    
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator(color: Colors.teal)),
+      builder: (BuildContext dialogContext) => const Center(child: CircularProgressIndicator(color: Colors.teal)),
     );
 
     try {
-      debugPrint("🔎 Escaneando citas para la fecha: '$nuevaFechaStr'");
-
       final snapshot = await FirebaseFirestore.instance
           .collection('pagos')
           .where('fechaCita', isEqualTo: nuevaFechaStr)
-          .get()
-          .timeout(const Duration(seconds: 5));
+          .get();
 
-      final List<String> horasOcupadas = snapshot.docs
-          .map((doc) => doc.data()['horaCita'] as String? ?? '')
-          .where((hora) => hora.isNotEmpty)
-          .toList();
+      final List<String> horasOcupadas = snapshot.docs.map((doc) {
+        final data = doc.data();
+        return (data['horaCita']?.toString() ?? '');
+      }).where((hora) => hora.isNotEmpty).toList();
 
-      debugPrint("🚨 Horas detectadas como ocupadas: $horasOcupadas");
+      if (!mounted) return;
+      Navigator.pop(context); // Cierra el loading de forma segura
 
-      if (context.mounted) {
-        Navigator.pop(context); // Cierra el loader de consulta
-      }
+      await _mostrarSelectorHorarios(
+        appointment: appointment,
+        nuevaFechaStr: nuevaFechaStr,
+        horasOcupadas: horasOcupadas,
+      );
 
-      if (context.mounted) {
-        await _mostrarSelectorHorarios(
-          context: context,
-          appointment: appointment,
-          nuevaFechaStr: nuevaFechaStr,
-          horasOcupadas: horasOcupadas,
-        );
-      }
     } catch (e) {
-      if (context.mounted) {
-        Navigator.pop(context);
-      }
-      debugPrint("Error escaneando horas reservadas: $e");
+      if (!mounted) return;
+      Navigator.pop(context);
+      debugPrint("Error: $e");
     }
   }
 
@@ -320,6 +289,7 @@ class DailyAppointmentsList extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Row(
@@ -334,18 +304,21 @@ class DailyAppointmentsList extends StatelessWidget {
             ),
             const Divider(),
             Expanded(
-              child: appointments.isEmpty
-                  ? const Center(
-                      child: Text(
-                        'No hay citas agendadas\npara esta fecha.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.grey),
+              child: widget.appointments.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 32),
+                      child: Center(
+                        child: Text(
+                          'No hay citas agendadas\npara esta fecha.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.grey),
+                        ),
                       ),
                     )
                   : ListView.builder(
-                      itemCount: appointments.length,
+                      itemCount: widget.appointments.length,
                       itemBuilder: (context, index) {
-                        final app = appointments[index];
+                        final app = widget.appointments[index];
                         final String timeFormatted = DateFormat('hh:mm a').format(app.appointmentDateTime);
                         
                         return ListTile(
@@ -367,9 +340,7 @@ class DailyAppointmentsList extends StatelessWidget {
                               const SizedBox(width: 4),
                               IconButton(
                                 icon: const Icon(Icons.edit, color: Colors.grey, size: 18),
-                                tooltip: 'Editar fecha y hora',
                                 onPressed: () => _reprogramarCita(
-                                  context: context,
                                   appointment: app,
                                 ),
                               ),

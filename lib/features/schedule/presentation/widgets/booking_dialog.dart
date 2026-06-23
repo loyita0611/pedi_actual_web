@@ -25,8 +25,9 @@ class _BookingDialogState extends State<BookingDialog> {
   int _currentStep = 1; // 1: Datos Médicos, 2: Mostrar Datos Clínica + BCV, 3: Formulario "Pagado"
   final _formKey = GlobalKey<FormState>();
   final _paymentFormKey = GlobalKey<FormState>();
+  bool _isSaving = false; // Variable de control para el estado de carga interno
 
-  // --- CONTROLADORES ORIGINALES MANTENIDOS ---
+  // --- CONTROLADORES ORIGINALES ---
   final _patientNameController = TextEditingController();
   final _addressController = TextEditingController();
   final _representativeNameController = TextEditingController();
@@ -49,7 +50,6 @@ class _BookingDialogState extends State<BookingDialog> {
   bool _isLoadingTasa = true;
   final double _montoUSD = 40.0;
 
-  // Lista de bancos populares en Venezuela para el menú desplegable
   final List<String> _bancosVenezuela = [
     'Banco de Venezuela',
     'Banesco',
@@ -70,7 +70,8 @@ class _BookingDialogState extends State<BookingDialog> {
 
   Future<void> _fetchBCVTasa() async {
     try {
-      final response = await http.get(Uri.parse('https://ve.dolarapi.com/v1/dolares/oficial'));
+      final response = await http.get(Uri.parse('https://ve.dolarapi.com/v1/dolares/oficial'))
+          .timeout(const Duration(seconds: 5));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         setState(() {
@@ -125,11 +126,28 @@ class _BookingDialogState extends State<BookingDialog> {
       ),
       content: SizedBox(
         width: 500,
-        child: SingleChildScrollView(
-          child: _buildCurrentStepContent(),
-        ),
+        child: _isSaving 
+            ? const SizedBox(
+                height: 200,
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      CircularProgressIndicator(color: Colors.teal),
+                      SizedBox(height: 16),
+                      Text(
+                        "Procesando registro y enviando correo...", 
+                        style: TextStyle(color: Colors.teal, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            : SingleChildScrollView(
+                child: _buildCurrentStepContent(),
+              ),
       ),
-      actions: [
+      actions: _isSaving ? [] : [
         TextButton(
           onPressed: () {
             if (_currentStep > 1) {
@@ -168,7 +186,7 @@ class _BookingDialogState extends State<BookingDialog> {
     }
   }
 
-  // --- PASO 1: TU FORMULARIO MÉDICO COMPLETO + MOTIVO ---
+  // --- PASO 1: FORMULARIO MÉDICO COMPLETO ---
   Widget _buildMedicalForm() {
     return Form(
       key: _formKey,
@@ -270,7 +288,7 @@ class _BookingDialogState extends State<BookingDialog> {
     );
   }
 
-  // --- PASO 2: SELECCIÓN DE MÉTODO Y DATOS DE LA CLÍNICA (API BCV REAL) ---
+  // --- PASO 2: SELECCIÓN DE MÉTODO Y DATOS ---
   Widget _buildClinicPaymentInstructions() {
     double totalEnBs = _montoUSD * _tasaBCV;
 
@@ -293,7 +311,6 @@ class _BookingDialogState extends State<BookingDialog> {
           },
         ),
         const SizedBox(height: 20),
-        
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(16),
@@ -312,7 +329,6 @@ class _BookingDialogState extends State<BookingDialog> {
                 style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.teal, fontSize: 14),
               ),
               const SizedBox(height: 10),
-              
               if (_selectedPaymentMethod == 'Pago Móvil') ...[
                 const Text('• Banco: BNC (0191)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
                 const Text('• Teléfono Destino: 0412-5555555', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
@@ -323,12 +339,10 @@ class _BookingDialogState extends State<BookingDialog> {
                 const Text('• Nombre: PediaActual C.A.', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
                 const Text('• RIF: J-55555555-0', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
               ],
-              
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 10),
                 child: Divider(color: Colors.teal, thickness: 0.5),
               ),
-              
               _isLoadingTasa 
                 ? const Center(child: Padding(
                     padding: EdgeInsets.all(8.0),
@@ -358,7 +372,7 @@ class _BookingDialogState extends State<BookingDialog> {
     );
   }
 
-  // --- PASO 3: DETALLES DEL PAGO REALIZADO (CON LISTA DESPLEGABLE) ---
+  // --- PASO 3: DETALLES DEL PAGO REALIZADO ---
   Widget _buildRegisterPaymentForm() {
     return Form(
       key: _paymentFormKey,
@@ -368,7 +382,6 @@ class _BookingDialogState extends State<BookingDialog> {
         children: [
           const Divider(),
           const SizedBox(height: 8),
-          
           DropdownButtonFormField<String>(
             initialValue: _selectedOriginBank,
             decoration: const InputDecoration(
@@ -387,10 +400,7 @@ class _BookingDialogState extends State<BookingDialog> {
             },
             validator: (value) => value == null ? 'Por favor selecciona el banco emisor' : null,
           ),
-          
           const SizedBox(height: 16),
-          
-          // Cédula del Titular
           TextFormField(
             controller: _senderIdController,
             decoration: const InputDecoration(
@@ -401,8 +411,6 @@ class _BookingDialogState extends State<BookingDialog> {
             validator: (value) => value!.isEmpty ? 'Por favor ingresa la cédula' : null,
           ),
           const SizedBox(height: 16),
-          
-          // Monto Transferido en Bs.
           TextFormField(
             controller: _amountPaidController,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -414,8 +422,6 @@ class _BookingDialogState extends State<BookingDialog> {
             validator: (value) => value!.isEmpty ? 'Por favor ingresa el monto exacto' : null,
           ),
           const SizedBox(height: 16),
-          
-          // Número de Referencia Bancaria
           TextFormField(
             controller: _referenceController,
             keyboardType: TextInputType.number,
@@ -436,18 +442,18 @@ class _BookingDialogState extends State<BookingDialog> {
     );
   }
 
-  // --- CONTROLADOR DE FLUJO Y ENVÍO ---
-  void _handleNavigationAndSubmit() {
+  // --- CONTROLADOR DE FLUJO ASÍNCRONO OPTIMIZADO Y CONFIGURADO ---
+  void _handleNavigationAndSubmit() async {
     if (_currentStep == 1) {
       if (_formKey.currentState!.validate() && _selectedBirthDate != null) {
         setState(() { _currentStep = 2; });
       }
     } else if (_currentStep == 2) {
       setState(() { _currentStep = 3; });
-    // ... Código anterior del método ...
-   }  else {
+    } else {
       if (_paymentFormKey.currentState!.validate()) {
-        // 1. Creamos la entidad local original del dominio
+        setState(() { _isSaving = true; }); 
+
         final newAppointment = AppointmentEntity(
           id: '',
           patientName: _patientNameController.text.trim(),
@@ -465,57 +471,71 @@ class _BookingDialogState extends State<BookingDialog> {
         final String horaCitaStr = widget.timeString;
         const String numeroDoctora = "+58 412-5555555"; 
 
-        // 2. Guardamos el respaldo en Firestore (Se queda en tu Plan Spark Gratis)
-        FirebaseFirestore.instance.collection('pagos').add({
-          'nombrePaciente': nombrePaciente,
-          'emailPaciente': correoPaciente,
-          'fechaCita': fechaCitaStr,
-          'horaCita': horaCitaStr,
-          'telefonoDoctora': numeroDoctora,
-          'bancoEmisor': _selectedOriginBank,
-          'cedulaTitular': _senderIdController.text.trim(),
-          'montoBs': _amountPaidController.text.trim(),
-          'referencia': _referenceController.text.trim(),
-          'metodoPago': _selectedPaymentMethod,
-          'fechaRegistro': FieldValue.serverTimestamp(),
-          'estado': 'pending',
-        }).then((docRef) {
+        try {
+          // 1. Intentar guardar en Firestore con Timeout controlado
+          DocumentReference docRef = await FirebaseFirestore.instance.collection('pagos').add({
+            'nombrePaciente': nombrePaciente,
+            'emailPaciente': correoPaciente,
+            'fechaCita': fechaCitaStr,
+            'horaCita': horaCitaStr,
+            'telefonoDoctora': numeroDoctora,
+            'bancoEmisor': _selectedOriginBank,
+            'cedulaTitular': _senderIdController.text.trim(),
+            'montoBs': _amountPaidController.text.trim(),
+            'referencia': _referenceController.text.trim(),
+            'metodoPago': _selectedPaymentMethod,
+            'fechaRegistro': FieldValue.serverTimestamp(),
+            'estado': 'pending',
+          }).timeout(const Duration(seconds: 6));
+          
           debugPrint("¡Respaldo de pago guardado en Firestore ID: ${docRef.id}!");
-        }).catchError((error) {
-          debugPrint("Error respaldando en Firestore: $error");
-        });
 
-        // 3. ENVÍO DIRECTO DEL CORREO DESDE FLUTTER (Con tus credenciales reales)
-        final urlCorreo = Uri.parse('https://api.emailjs.com/api/v1.0/email/send');
-        
-        http.post(
-          urlCorreo,
-          headers: {'Content-Type': 'application/json'},
-          body: json.encode({
-            'service_id': 'service_vfquxn8',       // 👈 Tu Service ID de Gmail
-            'template_id': 'template_brfi9f5',      // 👈 Tu Template ID
-            'user_id': 'wC6RQuuJG9ZfdQxp9',        // 👈 Tu Public Key
-            'template_params': {
-              'to_email': correoPaciente,
-              'patient_name': nombrePaciente,
-              'appointment_date': fechaCitaStr,
-              'appointment_time': horaCitaStr,
-              'doctor_phone': numeroDoctora,
-            }
-          }),
-        ).then((response) {
-          if (response.statusCode == 200) {
-            debugPrint("¡Correo enviado exitosamente al paciente!");
+          // 2. Enviar correo usando tus IDs correctos de EmailJS 🚀
+          final urlCorreo = Uri.parse('https://api.emailjs.com/api/v1.0/email/send');
+          final response = await http.post(
+            urlCorreo,
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({
+              'service_id': 'service_vfquxn8',  // Integrado
+              'template_id': 'template_brfi9f5', // Integrado
+              'user_id': 'wC6RQuuJG9ZfdQxp9',
+              'template_params': {
+                'to_email': correoPaciente,
+                'patient_name': nombrePaciente,
+                'appointment_date': fechaCitaStr,
+                'appointment_time': horaCitaStr,
+                'doctor_phone': numeroDoctora,
+              }
+            }),
+          ).timeout(const Duration(seconds: 5));
+
+          if (response.statusCode != 200) {
+            debugPrint("⚠️ EmailJS devolvió una respuesta no exitosa: ${response.body}");
           } else {
-            debugPrint("Error de API de correo: ${response.body}");
+            debugPrint("¡Correo enviado exitosamente al paciente!");
           }
-        }).catchError((e) {
-          debugPrint("Error enviando HTTP de correo: $e");
-        });
 
-        // Ejecuta el flujo original de tu App y cierra el diálogo
-        widget.onConfirmBooking(newAppointment);
-        Navigator.pop(context);
+          // 3. Éxito -> Confirmamos y cerramos la vista controladamente
+          widget.onConfirmBooking(newAppointment);
+
+          if (mounted) {
+            Navigator.of(context).pop(); 
+          }
+
+        } catch (e) {
+          debugPrint("🚨 Error detectado durante el agendamiento: $e");
+          
+          // Mantiene la vista abierta ante un fallo de red para que el usuario pueda reintentar sin perder sus datos
+          if (mounted) {
+            setState(() { _isSaving = false; });
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Hubo un problema de conexión: $e. Inténtalo de nuevo.'),
+                backgroundColor: Colors.redAccent,
+              ),
+            );
+          }
+        }
       }
     }
   } 
