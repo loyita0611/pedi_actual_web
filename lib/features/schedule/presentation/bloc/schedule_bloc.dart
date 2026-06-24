@@ -27,34 +27,25 @@ class ScheduleBloc extends Bloc<ScheduleEvent, ScheduleState> {
       }
     });
 
-    // 2. Manejador para Registrar Nueva Cita Pediátrica (Actualización Optimista)
+    // 2. Manejador para Registrar Nueva Cita Pediátrica (Sincronizado de Verdad)
     on<BookNewAppointment>((event, emit) async {
       final DateTime currentDate = event.appointment.appointmentDateTime;
-      final currentState = state;
-
-      // Guardamos el estado anterior por seguridad en caso de error
-      List<AppointmentEntity> oldAppointments = []; 
-      if (currentState is ScheduleLoaded) {
-        oldAppointments = currentState.appointments;
-      }
 
       emit(AppointmentBookingInProgress()); 
       
       try {
-        // 1. Enviamos la petición de guardado a Firestore y esperamos la confirmación del servidor
+        // 1. Enviamos la petición de guardado a Firestore y esperamos la confirmación real del servidor
         await bookAppointment(event.appointment);
         
-        // 2. 🚀 SOLUCIÓN: En lugar de re-consultar a Firebase (que puede devolver datos de caché viejos),
-        // creamos una nueva lista local combinando las citas anteriores con la nueva entidad insertada.
-        final List<AppointmentEntity> localUpdatedAppointments = List.from(oldAppointments)
-          ..add(event.appointment);
+        // 2. 🚀 CONSULTA REAL: Traemos la lista actualizada directamente de la base de datos.
+        // Al esperar el 'await' de arriba, garantizamos que Firestore ya tiene el cambio reflejado.
+        final List<AppointmentEntity> updatedAppointments = await getAppointmentsByDate(currentDate);
 
-        // 3. Emitimos directamente el nuevo estado con los datos actualizados localmente en tiempo real
-        emit(ScheduleLoaded(appointments: localUpdatedAppointments, selectedDate: currentDate));
+        // 3. Emitimos el estado con los datos frescos y reales
+        emit(ScheduleLoaded(appointments: updatedAppointments, selectedDate: currentDate));
         
       } catch (e) {
-        // Si la inserción en Firebase falla por red o permisos, revertimos la UI al estado previo seguro
-        emit(ScheduleLoaded(appointments: oldAppointments, selectedDate: currentDate));
+        // Si falla, emitimos el error
         emit(ScheduleError('Error al guardar la cita: ${e.toString()}'));
       }
     });

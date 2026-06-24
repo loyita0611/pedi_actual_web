@@ -16,17 +16,16 @@ class AppointmentRemoteDataSourceImpl implements AppointmentRemoteDataSource {
 
   @override
   Future<List<AppointmentModel>> getAppointmentsByDate(DateTime date) async {
-    // Calculamos el inicio y fin del día seleccionado para el filtro de Firestore
     final startOfDay = DateTime(date.year, date.month, date.day, 0, 0, 0);
     final endOfDay = DateTime(date.year, date.month, date.day, 23, 59, 59);
 
+    // 🚀 AHORA LEE DE LA COLECCIÓN ÚNICA 'citas'
     final snapshot = await firestore
-        .collection('appointments')
+        .collection('citas')
         .where('appointmentDateTime', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
         .where('appointmentDateTime', isLessThanOrEqualTo: Timestamp.fromDate(endOfDay))
         .get();
 
-    // Mapeamos los documentos devueltos por Firebase a nuestro AppointmentModel
     return snapshot.docs
         .map((doc) => AppointmentModel.fromJson(doc.data(), doc.id))
         .toList();
@@ -34,20 +33,27 @@ class AppointmentRemoteDataSourceImpl implements AppointmentRemoteDataSource {
 
   @override
   Future<void> bookAppointment(AppointmentModel appointment) async {
-    // Agregamos un nuevo documento. Firestore generará el ID automáticamente.
-    await firestore.collection('appointments').add(appointment.toJson());
+    if (appointment.id.isNotEmpty) {
+      await firestore
+          .collection('citas') // 🚀 ACTUALIZA EN 'citas'
+          .doc(appointment.id)
+          .set(appointment.toJson(), SetOptions(merge: true));
+    } else {
+      await firestore
+          .collection('citas') // 🚀 CREA EN 'citas'
+          .add(appointment.toJson());
+    }
   }
 
   @override
   Future<void> cancelAppointment(String appointmentId) async {
     try {
       await firestore
-          .collection('appointments')
+          .collection('citas') // 🚀 CANCELA EN 'citas'
           .doc(appointmentId)
           .update({'status': 'cancelled'});
     } catch (e) {
-      //throw ServerException(); // O el manejo de excepciones que tengas configurado
+      // Manejo de excepciones
     }
   }
-
 }

@@ -34,22 +34,20 @@ class TimeSlotHelper {
       0,
     );
 
-    // Definimos la hora límite para dejar de generar bloques
+    // Definimos la hora límite para dejar de generar bloques (Inclusivo hasta las 4:00 PM)
     final DateTime limitTime = DateTime(
       selectedDate.year,
       selectedDate.month,
       selectedDate.day,
       endHour,
-      0,
+      1, // Le sumamos un minuto para que capture el bloque de las 4:00 PM perfectamente
     );
 
     // Bucle para ir sumando los intervalos (ej: de 30 en 30 minutos)
     while (currentSlot.isBefore(limitTime)) {
-      // 1. Formatear la hora legible para el usuario de manera manual o con intl
       final String timeString = _formatToAmPm(currentSlot);
 
-      // 2. Comprobar si ya existe una cita en Firebase para este bloque exacto de hora y fecha
-      // Nota: Comparamos año, mes, día, hora y minuto.
+      // Comprobar si ya existe una cita en Firebase para este bloque exacto de hora y fecha
       final bool occupied = bookedAppointments.any((appointment) =>
           appointment.appointmentDateTime.year == currentSlot.year &&
           appointment.appointmentDateTime.month == currentSlot.month &&
@@ -58,14 +56,22 @@ class TimeSlotHelper {
           appointment.appointmentDateTime.minute == currentSlot.minute &&
           appointment.status != 'cancelled'); // Ignoramos las canceladas
 
-      // 3. Añadir el bloque procesado a nuestra lista
+      // 🚀 SOLUCIÓN: Creamos un objeto DateTime totalmente nuevo e independiente para cada slot
+      final DateTime frozenSlotDateTime = DateTime(
+        currentSlot.year,
+        currentSlot.month,
+        currentSlot.day,
+        currentSlot.hour,
+        currentSlot.minute,
+      );
+
       slots.add(TimeSlotModel(
         timeString: timeString,
-        dateTime: currentSlot,
+        dateTime: frozenSlotDateTime, // Usamos la instancia congelada
         isOccupied: occupied,
       ));
 
-      // 4. Avanzar el reloj para el próximo bloque (sumar 30 minutos)
+      // Avanzar el reloj para el próximo bloque (sumar 30 minutos)
       currentSlot = currentSlot.add(Duration(minutes: intervalMinutes));
     }
 

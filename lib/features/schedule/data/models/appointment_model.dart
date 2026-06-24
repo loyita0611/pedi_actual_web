@@ -13,29 +13,38 @@ class AppointmentModel extends AppointmentEntity {
     required super.email,
     required super.appointmentDateTime,
     required super.status,
+    super.pagoReferencia,
+    super.pagoMonto,
+    super.pagoBanco,
+    super.pagoMetodo,
+    super.pagoEstado,
+    super.pagoCedula,    // 🚀 NUEVO
+    super.pagoTelefono,  // 🚀 NUEVO
   });
 
-  // Convertir un documento de Firestore (Map) a nuestro modelo de Flutter
   factory AppointmentModel.fromJson(Map<String, dynamic> json, String documentId) {
     return AppointmentModel(
       id: documentId,
-      patientName: json['patientName'] as String,
-      // Se corrigió el error de tipeo 'paddress' por 'address'
-      address: json['address'] as String, 
-      // Mapeamos correctamente la fecha de nacimiento (si la guardas como Timestamp)
+      patientName: json['patientName'] ?? '',
+      address: json['address'] ?? '', 
       patientBirthDate: (json['patientBirthDate'] as Timestamp).toDate(),
-      representativeName: json['representativeName'] as String,
-      email: json['email'] as String,
-      // Se cambió 'dateTime' por 'appointmentDateTime' que es el nombre de la entidad
+      representativeName: json['representativeName'] ?? '',
+      email: json['email'] ?? '',
       appointmentDateTime: (json['appointmentDateTime'] as Timestamp).toDate(),
-      status: json['status'] as String,
+      status: json['status'] ?? 'pending',
+      
+      pagoReferencia: json['pagoReferencia'] as String?,
+      pagoMonto: (json['pagoMonto'] as num?)?.toDouble(),
+      pagoBanco: json['pagoBanco'] as String?,
+      pagoMetodo: json['pagoMetodo'] as String?,
+      pagoEstado: json['pagoEstado'] as String?,
+      pagoCedula: json['pagoCedula'] as String?,    // 🚀 NUEVO
+      pagoTelefono: json['pagoTelefono'] as String?,// 🚀 NUEVO
     );
   }
 
-  // Convertir nuestro modelo a un Map de JSON para enviarlo a Firestore
   Map<String, dynamic> toJson() {
     return {
-      // Usamos las propiedades exactas de la nueva entidad pediátrica
       'patientName': patientName,
       'patientBirthDate': Timestamp.fromDate(patientBirthDate),
       'address': address,
@@ -43,6 +52,14 @@ class AppointmentModel extends AppointmentEntity {
       'email': email,
       'appointmentDateTime': Timestamp.fromDate(appointmentDateTime),
       'status': status,
+      
+      'pagoReferencia': pagoReferencia,
+      'pagoMonto': pagoMonto,
+      'pagoBanco': pagoBanco,
+      'pagoMetodo': pagoMetodo,
+      'pagoEstado': pagoEstado,
+      'pagoCedula': pagoCedula,    
+      'pagoTelefono': pagoTelefono,
     };
   }
 }

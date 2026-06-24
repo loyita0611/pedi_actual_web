@@ -12,13 +12,11 @@ class AppointmentRepositoryImpl implements AppointmentRepository {
 
   @override
   Future<List<AppointmentEntity>> getAppointmentsByDate(DateTime date) async {
-    // Buscamos los modelos desde Firebase y los retornamos (Dart los castsea automáticamente a Entity)
     return await remoteDataSource.getAppointmentsByDate(date);
   }
 
   @override
   Future<void> bookAppointment(AppointmentEntity appointment) async {
-    // Convertimos la Entidad que viene de la UI en un Modelo serializable para Firebase
     final appointmentModel = AppointmentModel(
       id: appointment.id,
       patientName: appointment.patientName,
@@ -28,6 +26,14 @@ class AppointmentRepositoryImpl implements AppointmentRepository {
       email: appointment.email,
       appointmentDateTime: appointment.appointmentDateTime,
       status: appointment.status,
+      
+      pagoReferencia: appointment.pagoReferencia,
+      pagoMonto: appointment.pagoMonto,
+      pagoBanco: appointment.pagoBanco,
+      pagoMetodo: appointment.pagoMetodo,
+      pagoEstado: appointment.pagoEstado,
+      pagoCedula: appointment.pagoCedula,        
+      pagoTelefono: appointment.pagoTelefono,    
     );
 
     return await remoteDataSource.bookAppointment(appointmentModel);

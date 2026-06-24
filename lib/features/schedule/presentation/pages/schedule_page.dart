@@ -1,6 +1,7 @@
 // lib/features/schedule/presentation/pages/schedule_page.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../domain/entities/appointment_entity.dart'; 
 import 'package:pedia_actual/features/schedule/presentation/widgets/time_slots_grid.dart';
 import '../bloc/schedule_bloc.dart';
 import '../bloc/schedule_state.dart';
@@ -39,6 +40,7 @@ class _SchedulePageState extends State<SchedulePage> {
                 backgroundColor: Colors.green,
               ),
             );
+            // 🔄 Forzar recarga automática del día para que los botones cambien de color al instante
             context.read<ScheduleBloc>().add(LoadAppointmentsForDate(_focusedDay));
           }
         },
@@ -149,7 +151,7 @@ class _SchedulePageState extends State<SchedulePage> {
                 selectedDate: state.selectedDate,
                 appointments: state.appointments,
                 crossAxisCount: 2,
-                onSlotSelected: _openBookingDialog, // También responde al método asíncrono
+                onSlotSelected: _openBookingDialog,
               ),
             ),
           ],
@@ -165,24 +167,50 @@ class _SchedulePageState extends State<SchedulePage> {
     context.read<ScheduleBloc>().add(LoadAppointmentsForDate(selectedDay));
   }
 
-  // 🔄 MÉTODO ASÍNCRONO SINCRONIZADO: Espera el cierre del diálogo para recargar la grilla
+  // 🚀 MÉTODO OPTIMIZADO Y REPARADO PARA SOPORTAR NUEVAS CITAS Y EDICIONES
   void _openBookingDialog(String timeString, DateTime appointmentDateTime) async {
+    AppointmentEntity? appointmentParaEditar;
+    final state = context.read<ScheduleBloc>().state;
+
+    if (state is ScheduleLoaded) {
+      // Buscamos si coincide con alguna cita guardada en el arreglo local
+      for (var app in state.appointments) {
+        if (app.appointmentDateTime.year == appointmentDateTime.year &&
+            app.appointmentDateTime.month == appointmentDateTime.month &&
+            app.appointmentDateTime.day == appointmentDateTime.day &&
+            app.appointmentDateTime.hour == appointmentDateTime.hour &&
+            app.appointmentDateTime.minute == appointmentDateTime.minute) {
+          appointmentParaEditar = app;
+          break;
+        }
+      }
+    }
+
+    // Si es una hora libre, le pasamos una entidad inicializada limpia pero con la fecha/hora seleccionada
+    appointmentParaEditar ??= AppointmentEntity(
+      id: '',
+      patientName: '',
+      patientBirthDate: DateTime.now().subtract(const Duration(days: 365)),
+      address: '',
+      representativeName: '',
+      email: '',
+      appointmentDateTime: appointmentDateTime, // Arrastra la hora correcta cliqueada
+      status: 'pending',
+    );
+
     await showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (dialogContext) {
         return BookingDialog(
+          appointment: appointmentParaEditar, 
           timeString: timeString,
           appointmentDateTime: appointmentDateTime,
-          onConfirmBooking: (newAppointment) {
-            context.read<ScheduleBloc>().add(BookNewAppointment(newAppointment));
+          onConfirmBooking: (updatedAppointment) {
+            context.read<ScheduleBloc>().add(BookNewAppointment(updatedAppointment));
           },
         );
       },
     );
-
-    // 🚀 Al cerrarse el modal (sea guardando o cancelando), forzamos al Bloc a refrescar el panel de fondo
-    if (mounted) {
-      context.read<ScheduleBloc>().add(LoadAppointmentsForDate(_focusedDay));
-    }
   }
 }

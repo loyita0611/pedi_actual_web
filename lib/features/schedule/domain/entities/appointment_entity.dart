@@ -4,13 +4,22 @@ import 'package:equatable/equatable.dart';
 
 class AppointmentEntity extends Equatable {
   final String id;
-  final String patientName;       // Nombre y apellido del paciente (niño)
-  final DateTime patientBirthDate; // Fecha de nacimiento del niño
-  final String address;           // Dirección
-  final String representativeName;// Nombre y apellido del representante (adulto)
-  final String email;             // Correo electrónico de contacto
-  final DateTime appointmentDateTime; // Fecha y hora de la cita
-  final String status;            // 'pending', 'confirmed', 'cancelled'
+  final String patientName;       
+  final DateTime patientBirthDate; 
+  final String address;           
+  final String representativeName;
+  final String email;             
+  final DateTime appointmentDateTime; 
+  final String status;            
+
+  // Datos del Pago Integrados
+  final String? pagoReferencia;
+  final double? pagoMonto;
+  final String? pagoBanco;
+  final String? pagoMetodo;
+  final String? pagoEstado;
+  final String? pagoCedula;    // 🚀 NUEVO
+  final String? pagoTelefono;  // 🚀 NUEVO
 
   const AppointmentEntity({
     required this.id,
@@ -21,6 +30,13 @@ class AppointmentEntity extends Equatable {
     required this.email,
     required this.appointmentDateTime,
     required this.status,
+    this.pagoReferencia,
+    this.pagoMonto,
+    this.pagoBanco,
+    this.pagoMetodo,
+    this.pagoEstado,
+    this.pagoCedula,    // 🚀 NUEVO
+    this.pagoTelefono,  // 🚀 NUEVO
   });
 
   @override
@@ -33,5 +49,12 @@ class AppointmentEntity extends Equatable {
         email,
         appointmentDateTime,
         status,
+        pagoReferencia,
+        pagoMonto,
+        pagoBanco,
+        pagoMetodo,
+        pagoEstado,
+        pagoCedula,   
+        pagoTelefono,  
       ];
 }

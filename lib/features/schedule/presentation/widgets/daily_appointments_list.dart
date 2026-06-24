@@ -8,12 +8,12 @@ import '../../domain/entities/appointment_entity.dart';
 
 class DailyAppointmentsList extends StatefulWidget {
   final List<AppointmentEntity> appointments;
-  final VoidCallback? onRefresh; // 🔄 Callback para avisarle al padre que actualice la pantalla
+  final VoidCallback? onRefresh;
 
   const DailyAppointmentsList({
     super.key, 
     required this.appointments,
-    this.onRefresh, // 🔄 Lo recibimos aquí
+    this.onRefresh, 
   });
 
   @override
@@ -25,6 +25,7 @@ class _DailyAppointmentsListState extends State<DailyAppointmentsList> {
   // 🛠️ 1. Diálogo de Confirmación de Seguridad
   Future<void> _mostrarConfirmacionGuardar({
     required AppointmentEntity appointment,
+    required DateTime nuevaFecha,
     required String nuevaFechaStr,
     required String nuevaHoraStr,
   }) async {
@@ -58,6 +59,7 @@ class _DailyAppointmentsListState extends State<DailyAppointmentsList> {
                 Navigator.pop(dialogContext); 
                 _procesarReprogramacion(
                   appointment: appointment,
+                  nuevaFecha: nuevaFecha, 
                   nuevaFechaStr: nuevaFechaStr,
                   nuevaHoraStr: nuevaHoraStr,
                 );
@@ -70,9 +72,10 @@ class _DailyAppointmentsListState extends State<DailyAppointmentsList> {
     );
   }
 
-  // 🛠️ 2. Diálogo para elegir horarios (Detecta y bloquea ocupados)
+  // 🛠️ 2. Diálogo para elegir horarios
   Future<void> _mostrarSelectorHorarios({
     required AppointmentEntity appointment,
+    required DateTime nuevaFecha,
     required String nuevaFechaStr,
     required List<String> horasOcupadas, 
   }) async {
@@ -110,7 +113,7 @@ class _DailyAppointmentsListState extends State<DailyAppointmentsList> {
               itemCount: horariosDisponibles.length,
               itemBuilder: (context, index) {
                 final horaSlot = horariosDisponibles[index];
-                final bool estaOcupado = horasOcupadas.any((h) => h.trim().toUpperCase() == horaSlot.trim().toUpperCase());
+                final bool estaOcupado = horasOcupadas.any((h) => h.trim() == horaSlot.trim());
                 
                 return OutlinedButton(
                   style: OutlinedButton.styleFrom(
@@ -126,6 +129,7 @@ class _DailyAppointmentsListState extends State<DailyAppointmentsList> {
                     Navigator.pop(dialogContext); 
                     _mostrarConfirmacionGuardar(
                       appointment: appointment,
+                      nuevaFecha: nuevaFecha,
                       nuevaFechaStr: nuevaFechaStr,
                       nuevaHoraStr: horaSlot,
                     );
@@ -154,9 +158,10 @@ class _DailyAppointmentsListState extends State<DailyAppointmentsList> {
     );
   }
 
-  // 🛠️ 3. Lógica de guardado en la nube de Firestore y EmailJS
+  // 🛠️ 3. Lógica de guardado en la colección ÚNICA y EmailJS
   Future<void> _procesarReprogramacion({
     required AppointmentEntity appointment,
+    required DateTime nuevaFecha,
     required String nuevaFechaStr,
     required String nuevaHoraStr,
   }) async {
@@ -167,21 +172,28 @@ class _DailyAppointmentsListState extends State<DailyAppointmentsList> {
     );
 
     try {
-      final querySnapshot = await FirebaseFirestore.instance
-          .collection('pagos')
-          .where('nombrePaciente', isEqualTo: appointment.patientName)
-          .where('emailPaciente', isEqualTo: appointment.email)
-          .get();
+      // 1. Convertimos la hora de texto a DateTime de Dart
+      int hour = int.parse(nuevaHoraStr.substring(0, 2));
+      int minute = int.parse(nuevaHoraStr.substring(3, 5));
+      if (nuevaHoraStr.contains('PM') && hour != 12) hour += 12;
+      if (nuevaHoraStr.contains('AM') && hour == 12) hour = 0;
+      
+      final DateTime newAppointmentDateTime = DateTime(
+        nuevaFecha.year, nuevaFecha.month, nuevaFecha.day, hour, minute
+      );
 
-      if (querySnapshot.docs.isNotEmpty) {
-        final docId = querySnapshot.docs.first.id;
-        await FirebaseFirestore.instance.collection('pagos').doc(docId).update({
-          'fechaCita': nuevaFechaStr,
-          'horaCita': nuevaHoraStr,
+      // 🚀 2. ACTUALIZACIÓN ATÓMICA EN LA COLECCIÓN ÚNICA 'citas'
+      if (appointment.id.isNotEmpty) {
+        await FirebaseFirestore.instance
+            .collection('citas')
+            .doc(appointment.id)
+            .update({
+          'appointmentDateTime': Timestamp.fromDate(newAppointmentDateTime),
           'fechaActualizacion': FieldValue.serverTimestamp(),
         });
       }
 
+      // 3. ENVIAMOS EL CORREO
       final urlCorreo = Uri.parse('https://api.emailjs.com/api/v1.0/email/send');
       await http.post(
         urlCorreo,
@@ -203,7 +215,7 @@ class _DailyAppointmentsListState extends State<DailyAppointmentsList> {
       if (!mounted) return;
       Navigator.pop(context); // Cierra el indicador de carga
 
-      // 🔄 Ejecutamos la recarga global del padre si fue proveída
+      // 🔄 Recargar calendario
       if (widget.onRefresh != null) {
         widget.onRefresh!();
       } else {
@@ -224,7 +236,7 @@ class _DailyAppointmentsListState extends State<DailyAppointmentsList> {
     }
   }
 
-  // 🛠️ 4. Gatillo al pulsar el lápiz
+  // 🛠️ 4. Gatillo al pulsar el lápiz (Lee las horas ocupadas de la colección única 'citas')
   Future<void> _reprogramarCita({
     required AppointmentEntity appointment,
   }) async {
@@ -256,14 +268,25 @@ class _DailyAppointmentsListState extends State<DailyAppointmentsList> {
     );
 
     try {
+      // 🚀 BUSCAMOS LAS HORAS OCUPADAS DIRECTAMENTE EN 'citas' MEDIANTE TIMESTAMP
+      final startOfDay = DateTime(nuevaFecha.year, nuevaFecha.month, nuevaFecha.day, 0, 0, 0);
+      final endOfDay = DateTime(nuevaFecha.year, nuevaFecha.month, nuevaFecha.day, 23, 59, 59);
+
       final snapshot = await FirebaseFirestore.instance
-          .collection('pagos')
-          .where('fechaCita', isEqualTo: nuevaFechaStr)
+          .collection('citas')
+          .where('appointmentDateTime', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
+          .where('appointmentDateTime', isLessThanOrEqualTo: Timestamp.fromDate(endOfDay))
           .get();
 
       final List<String> horasOcupadas = snapshot.docs.map((doc) {
         final data = doc.data();
-        return (data['horaCita']?.toString() ?? '');
+        if (data['appointmentDateTime'] != null) {
+          final DateTime dt = (data['appointmentDateTime'] as Timestamp).toDate();
+          // Convertimos el Timestamp a un String tipo "08:30 AM" para compararlo
+          String formatted = DateFormat('hh:mm a').format(dt).toUpperCase();
+          return formatted.replaceAll('.', ''); // Limpiamos "A.M." a "AM" si es necesario
+        }
+        return '';
       }).where((hora) => hora.isNotEmpty).toList();
 
       if (!mounted) return;
@@ -271,6 +294,7 @@ class _DailyAppointmentsListState extends State<DailyAppointmentsList> {
 
       await _mostrarSelectorHorarios(
         appointment: appointment,
+        nuevaFecha: nuevaFecha, 
         nuevaFechaStr: nuevaFechaStr,
         horasOcupadas: horasOcupadas,
       );
@@ -319,7 +343,7 @@ class _DailyAppointmentsListState extends State<DailyAppointmentsList> {
                       itemCount: widget.appointments.length,
                       itemBuilder: (context, index) {
                         final app = widget.appointments[index];
-                        final String timeFormatted = DateFormat('hh:mm a').format(app.appointmentDateTime);
+                        final String timeFormatted = DateFormat('hh:mm a').format(app.appointmentDateTime).toUpperCase();
                         
                         return ListTile(
                           contentPadding: EdgeInsets.zero,
