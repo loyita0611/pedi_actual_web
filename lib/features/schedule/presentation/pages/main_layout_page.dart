@@ -2,15 +2,16 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:firebase_auth/firebase_auth.dart'; 
+import 'package:shared_preferences/shared_preferences.dart'; 
 import 'package:pedia_actual/features/schedule/presentation/pages/schedule_page.dart';
+import 'package:pedia_actual/features/schedule/presentation/pages/mis_pagos_page.dart'; 
 import 'package:pedia_actual/features/schedule/presentation/bloc/schedule_bloc.dart';
 import 'package:pedia_actual/features/schedule/presentation/bloc/schedule_event.dart';
 import '../../../../injection_container.dart' as di;
 
-// Enumerado para los 3 tipos de usuario
 enum UserRole { doctor, secretary, patient }
 
-// Modelo de usuario para la sesión
 class CurrentUser {
   final String name;
   final UserRole role;
@@ -36,19 +37,35 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
     super.initState();
     _user = widget.currentUser;
 
-    // 🚀 REDIRECCIÓN AL INICIAR SESIÓN SEGÚN EL ROL:
+    // Redirección inicial por defecto según el rol
     if (_user.role == UserRole.patient) {
       _selectedIndex = 7;
     } else {
       _selectedIndex = 0;
     }
+
+    // 🚀 Cargamos la última pestaña guardada si existe
+    _cargarPestanaGuardada();
   }
 
-  // 🔄 GENERADOR DINÁMICO DE PÁGINAS: Refresca el Bloc y el estado al cambiar de pestaña
+  // 🔹 Función protegida para evitar la pantalla en blanco
+  Future<void> _cargarPestanaGuardada() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final int? savedIndex = prefs.getInt('selected_page_index');
+      if (savedIndex != null && mounted) {
+        setState(() {
+          _selectedIndex = savedIndex;
+        });
+      }
+    } catch (e) {
+      debugPrint("Error leyendo la pestaña guardada: $e");
+    }
+  }
+
   Widget _getPageByIndex(int index) {
     switch (index) {
       case 0:
-        // 📅 Índice 0: Agenda - Genera un BlocProvider fresco cada vez que se accede
         return BlocProvider(
           create: (_) => di.sl<ScheduleBloc>()..add(LoadAppointmentsForDate(DateTime.now())),
           child: const SchedulePage(),
@@ -58,7 +75,7 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
       case 2:
         return const Center(child: Text('Módulo de Consultas / Historial', style: TextStyle(fontSize: 24)));
       case 3:
-        return const Center(child: Text('Módulo de Pagos', style: TextStyle(fontSize: 24)));
+        return const MisPagosPage();
       case 4:
         return const Center(child: Text('Módulo de Estadísticas y Reportes', style: TextStyle(fontSize: 24)));
       case 5:
@@ -67,6 +84,8 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
         return _buildOnlyContactPage();
       case 7:
         return _buildPatientInfoPage();
+      case 8: // 🔹 Nueva ruta para Configuración
+        return _buildConfiguracionPage();
       default:
         return BlocProvider(
           create: (_) => di.sl<ScheduleBloc>()..add(LoadAppointmentsForDate(DateTime.now())),
@@ -136,7 +155,8 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
                 ),
 
                 const Divider(color: Colors.white30, height: 1),
-                _buildSidebarItem(icon: Icons.settings_outlined, title: 'Configuración', pageIndex: -1),
+                // 🔹 Configuración ahora apunta al índice 8
+                _buildSidebarItem(icon: Icons.settings_outlined, title: 'Configuración', pageIndex: 8),
                 _buildSidebarItem(icon: Icons.logout, title: 'Salir', pageIndex: -2),
                 const SizedBox(height: 20),
               ],
@@ -189,9 +209,20 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: InkWell(
-        onTap: () {
+        onTap: () async {
+          // 🚪 SI PULSA SALIR (Muestra el diálogo de confirmación)
+          if (pageIndex == -2) {
+            _mostrarDialogoSalir();
+            return;
+          }
+
           if (pageIndex < 0) return;
+          
           setState(() => _selectedIndex = pageIndex);
+
+          // 🚀 GUARDAMOS la pestaña seleccionada en el navegador
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setInt('selected_page_index', pageIndex);
         },
         borderRadius: BorderRadius.circular(8),
         child: Container(
@@ -221,7 +252,45 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
     );
   }
 
-  // --- 📱 PANTALLA DE CONTACTO (ÍNDICE 6) ---
+  // 🔹 WIDGET: Diálogo elegante para confirmar cierre de sesión
+  void _mostrarDialogoSalir() {
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          title: const Row(
+            children: [
+              Icon(Icons.exit_to_app, color: Colors.redAccent),
+              SizedBox(width: 8),
+              Text('Cerrar Sesión', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            ],
+          ),
+          content: const Text('¿Estás seguro de que deseas salir de tu cuenta en PediActual?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancelar', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.redAccent,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              onPressed: () async {
+                Navigator.pop(dialogContext); // Cierra el diálogo
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.remove('selected_page_index'); // Borra memoria de pestañas
+                await FirebaseAuth.instance.signOut(); // Cierra sesión
+              },
+              child: const Text('Salir', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildOnlyContactPage() {
     return Scaffold(
       backgroundColor: const Color(0xFFF4F7F6),
@@ -272,7 +341,6 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
     );
   }
 
-  // --- 📢 PANTALLA DE INFORMACIÓN / CARTELERA (ÍNDICE 7) ---
   Widget _buildPatientInfoPage() {
     return Scaffold(
       backgroundColor: const Color(0xFFF4F7F6),
@@ -324,6 +392,100 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
                     ),
                   ),
                 ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- ⚙️ PANTALLA DE CONFIGURACIÓN (ÍNDICE 8) ---
+  // --- ⚙️ PANTALLA DE CONFIGURACIÓN (CON LÓGICA DE FIREBASE) ---
+  Widget _buildConfiguracionPage() {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF4F7F6),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(32.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Configuración de la Cuenta',
+              style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Color(0xFF4594A4)),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Administra tus preferencias, seguridad y notificaciones.',
+              style: TextStyle(fontSize: 14, color: Colors.black54),
+            ),
+            const SizedBox(height: 24),
+            
+            // Sección de Seguridad
+            const Text('Seguridad y Perfil', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
+            const SizedBox(height: 12),
+            Card(
+              elevation: 0,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.grey.shade300)),
+              child: Column(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.lock_outline, color: Color(0xFF4594A4)),
+                    title: const Text('Cambiar Contraseña'),
+                    trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+                    onTap: () async {
+                      // 🚀 Lógica para enviar correo de reseteo de clave
+                      final userEmail = FirebaseAuth.instance.currentUser?.email;
+                      if (userEmail != null) {
+                        await FirebaseAuth.instance.sendPasswordResetEmail(email: userEmail);
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Se ha enviado un enlace de cambio de clave a $userEmail')),
+                        );
+                      }
+                    },
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.email_outlined, color: Color(0xFF4594A4)),
+                    title: const Text('Actualizar Correo Electrónico'),
+                    trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+                    onTap: () {
+                      // Aviso de seguridad para actualización de correo
+                      showDialog(
+                        context: context,
+                        builder: (context) => AlertDialog(
+                          title: const Text("Actualizar Correo"),
+                          content: const Text("Para cambiar tu correo electrónico, por favor contacta con el administrador del sistema para garantizar la seguridad de tus datos."),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context), 
+                              child: const Text("Cerrar")
+                            )
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+            
+            const SizedBox(height: 24),
+            
+            // Sección de Notificaciones
+            const Text('Preferencias', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
+            const SizedBox(height: 12),
+            Card(
+              elevation: 0,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.grey.shade300)),
+              child: SwitchListTile(
+                activeThumbColor: const Color(0xFF4594A4),
+                secondary: const Icon(Icons.notifications_active_outlined, color: Color(0xFF4594A4)),
+                title: const Text('Notificaciones por Correo'),
+                subtitle: const Text('Recibir recordatorios de tus citas programadas'),
+                value: true, 
+                onChanged: (bool value) {},
               ),
             ),
           ],

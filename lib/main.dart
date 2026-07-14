@@ -2,21 +2,26 @@
 
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart'; 
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:pedia_actual/features/auth/presentation/pages/login_page.dart';
 import 'package:pedia_actual/firebase_options.dart';
-import 'injection_container.dart' as di; // Importamos con alias Dependency Injection
+import 'injection_container.dart' as di; 
+
+// 🔹 Importaciones del Layout y Vigilante
+import 'package:pedia_actual/features/schedule/presentation/widgets/inactivity_wrapper.dart'; 
+import 'package:pedia_actual/features/schedule/presentation/pages/main_layout_page.dart'; 
 
 void main() async {
-  // Asegura que los bindings de Flutter estén listos antes de inicializar servicios externos
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Inicializamos las opciones de Firebase apuntando al nuevo proyecto de forma correcta
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // OBLIGAMOS a Firebase a mantener la sesión guardada localmente
+  await FirebaseAuth.instance.setPersistence(Persistence.LOCAL);
   
-  // Inicializamos el contenedor de Inyección de Dependencias
   await di.init();
 
   runApp(const MyApp());
@@ -34,22 +39,52 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
       ),
       
-      // CONFIGURACIÓN DE IDIOMA (LOCALIZATION)
+      // Vigilante de inactividad
+      builder: (context, child) {
+        return InactivityWrapper(child: child!);
+      },
+      
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      // Definimos los idiomas soportados por la aplicación
       supportedLocales: const [
-        Locale('es', ''), // Español (Principal)
-        Locale('en', ''), // Inglés (Opcional)
+        Locale('es', ''), 
+        Locale('en', ''), 
       ],
-      // Forzamos a que la app inicie por defecto en español
       locale: const Locale('es', ''),
 
-      // Envolvemos el home con el BlocProvider inyectado con GetIt
-      home: const LoginPage(),
+      // HOME INTELIGENTE
+      home: StreamBuilder<User?>(
+        stream: FirebaseAuth.instance.authStateChanges(),
+        builder: (context, snapshot) {
+          
+          // Cargador mientras Firebase revisa la caché
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Scaffold(
+              backgroundColor: Color(0xFFF4F7F6),
+              body: Center(child: CircularProgressIndicator(color: Colors.teal)),
+            );
+          }
+          
+          // Si hay sesión guardada en Firebase
+          if (snapshot.hasData && snapshot.data != null) {
+            final firebaseUser = snapshot.data!;
+            
+            // Construimos el usuario base
+            final currentUser = CurrentUser(
+              name: firebaseUser.displayName ?? firebaseUser.email ?? 'Paciente',
+              role: UserRole.patient, 
+            );
+
+            return MainLayoutPage(currentUser: currentUser); 
+          }
+          
+          // Si no hay sesión o pasaron 6 minutos
+          return const LoginPage();
+        },
+      ),
     );
   }
 }

@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:firebase_auth/firebase_auth.dart'; // 👈 Importación agregada
 import '../../domain/entities/appointment_entity.dart';
 
 class DailyAppointmentsList extends StatefulWidget {
@@ -345,6 +346,9 @@ class _DailyAppointmentsListState extends State<DailyAppointmentsList> {
                         final app = widget.appointments[index];
                         final String timeFormatted = DateFormat('hh:mm a').format(app.appointmentDateTime).toUpperCase();
                         
+                        // 🔹 Capturamos el correo del usuario logueado
+                        final String? currentUserEmail = FirebaseAuth.instance.currentUser?.email;
+                        
                         return ListTile(
                           contentPadding: EdgeInsets.zero,
                           leading: const Icon(Icons.circle, color: Colors.amber, size: 12),
@@ -362,12 +366,15 @@ class _DailyAppointmentsListState extends State<DailyAppointmentsList> {
                                 style: const TextStyle(color: Colors.teal, fontWeight: FontWeight.bold, fontSize: 12),
                               ),
                               const SizedBox(width: 4),
-                              IconButton(
-                                icon: const Icon(Icons.edit, color: Colors.grey, size: 18),
-                                onPressed: () => _reprogramarCita(
-                                  appointment: app,
+                              
+                              // 🔹 El botón de editar solo se muestra si el correo coincide
+                              if (app.email == currentUserEmail)
+                                IconButton(
+                                  icon: const Icon(Icons.edit, color: Colors.grey, size: 18),
+                                  onPressed: () => _reprogramarCita(
+                                    appointment: app,
+                                  ),
                                 ),
-                              ),
                             ],
                           ),
                         );

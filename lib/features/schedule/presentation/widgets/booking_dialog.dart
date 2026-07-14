@@ -28,7 +28,7 @@ class _BookingDialogState extends State<BookingDialog> {
   final _paymentFormKey = GlobalKey<FormState>();
   bool _isSaving = false; 
 
-  late DateTime _currentDateTime;
+  late DateTime _currentDateTime; 
   late String _currentTimeString;
 
   final _patientNameController = TextEditingController();
