@@ -37,17 +37,18 @@ class _LoginPageState extends State<LoginPage> {
       User? firebaseUser = userCredential.user;
 
       if (firebaseUser != null) {
-        // Consultar Firestore
-        DocumentSnapshot userDoc = await _firestore
+        // 🚀 CAMBIO: Usamos .where() para buscar por el campo 'uid' en lugar de .doc()
+        QuerySnapshot querySnapshot = await _firestore
             .collection('users')
-            .doc(firebaseUser.uid)
+            .where('uid', isEqualTo: firebaseUser.uid)
+            .limit(1)
             .get();
 
         String name = 'Usuario';
         UserRole role = UserRole.patient; // Por defecto es paciente
 
-        if (userDoc.exists && userDoc.data() != null) {
-          final data = userDoc.data() as Map<String, dynamic>;
+        if (querySnapshot.docs.isNotEmpty) {
+          final data = querySnapshot.docs.first.data() as Map<String, dynamic>;
           name = data['name'] ?? 'Usuario';
           final String firestoreRole = data['role'] ?? 'patient';
           
@@ -61,6 +62,11 @@ class _LoginPageState extends State<LoginPage> {
         } else {
           name = firebaseUser.displayName ?? 'Padre de Familia';
           role = UserRole.patient;
+        }
+
+        // 🚀 RED DE SEGURIDAD: Forzar rol si el correo coincide exactamente
+        if (firebaseUser.email == 'secretaria@pediactual.com') {
+          role = UserRole.secretary;
         }
 
         if (!mounted) return;

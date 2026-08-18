@@ -8,6 +8,9 @@ import 'package:pedia_actual/features/schedule/presentation/pages/schedule_page.
 import 'package:pedia_actual/features/schedule/presentation/pages/mis_pagos_page.dart'; 
 import 'package:pedia_actual/features/schedule/presentation/bloc/schedule_bloc.dart';
 import 'package:pedia_actual/features/schedule/presentation/bloc/schedule_event.dart';
+import 'package:pedia_actual/features/secretary/presentation/pages/secretary_dashboard_page.dart';
+import 'package:pedia_actual/features/secretary/presentation/widgets/patient_directory_widget.dart';
+import 'package:pedia_actual/features/secretary/presentation/widgets/upload_prescription_widget.dart';
 import '../../../../injection_container.dart' as di;
 
 enum UserRole { doctor, secretary, patient }
@@ -40,6 +43,8 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
     // Redirección inicial por defecto según el rol
     if (_user.role == UserRole.patient) {
       _selectedIndex = 7;
+    } else if (_user.role == UserRole.secretary) {
+      _selectedIndex = 5;
     } else {
       _selectedIndex = 0;
     }
@@ -52,10 +57,17 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
   Future<void> _cargarPestanaGuardada() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final int? savedIndex = prefs.getInt('selected_page_index');
+      int? savedIndex = prefs.getInt('selected_page_index');
+      
+      // FORZAR a la secretaria al panel de control si estaba en 0 (la antigua agenda)
+      if (_user.role == UserRole.secretary && savedIndex == 0) {
+        savedIndex = 5;
+        await prefs.setInt('selected_page_index', 5);
+      }
+
       if (savedIndex != null && mounted) {
         setState(() {
-          _selectedIndex = savedIndex;
+          _selectedIndex = savedIndex!;
         });
       }
     } catch (e) {
@@ -66,12 +78,19 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
   Widget _getPageByIndex(int index) {
     switch (index) {
       case 0:
+      
         return BlocProvider(
           create: (_) => di.sl<ScheduleBloc>()..add(LoadAppointmentsForDate(DateTime.now())),
           child: const SchedulePage(),
         );
       case 1:
-        return const Center(child: Text('Módulo de Pacientes', style: TextStyle(fontSize: 24)));
+        return const Scaffold(
+          backgroundColor: Color(0xFFF4F7F6),
+          body: Padding(
+            padding: EdgeInsets.all(32.0),
+            child: PatientDirectoryWidget(),
+          ),
+        );
       case 2:
         return const Center(child: Text('Módulo de Consultas / Historial', style: TextStyle(fontSize: 24)));
       case 3:
@@ -79,13 +98,22 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
       case 4:
         return const Center(child: Text('Módulo de Estadísticas y Reportes', style: TextStyle(fontSize: 24)));
       case 5:
-        return const Center(child: Text('Módulo de Configuración de la Vista de Paciente', style: TextStyle(fontSize: 24)));
+      
+        return const SecretaryDashboardScreen();
       case 6:
         return _buildOnlyContactPage();
       case 7:
         return _buildPatientInfoPage();
       case 8: // 🔹 Nueva ruta para Configuración
         return _buildConfiguracionPage();
+      case 9:
+        return const Scaffold(
+          backgroundColor: Color(0xFFF4F7F6),
+          body: Padding(
+            padding: EdgeInsets.all(32.0),
+            child: UploadPrescriptionWidget(),
+          ),
+        );
       default:
         return BlocProvider(
           create: (_) => di.sl<ScheduleBloc>()..add(LoadAppointmentsForDate(DateTime.now())),
@@ -188,8 +216,9 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
         break;
       case UserRole.secretary:
         menuItems.addAll([
-          _buildSidebarItem(icon: Icons.calendar_month, title: 'Agenda General', pageIndex: 0),
-          _buildSidebarItem(icon: Icons.dashboard_customize_outlined, title: 'Info Vista Paciente', pageIndex: 5),
+          _buildSidebarItem(icon: Icons.dashboard, title: 'Panel de Control', pageIndex: 5),
+          _buildSidebarItem(icon: Icons.people_outline, title: 'Pacientes', pageIndex: 1),
+          _buildSidebarItem(icon: Icons.upload_file, title: 'Recetas / Documentos', pageIndex: 9),
         ]);
         break;
       case UserRole.patient:
