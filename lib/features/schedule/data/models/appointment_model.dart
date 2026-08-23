@@ -1,5 +1,3 @@
-// lib/features/schedule/data/models/appointment_model.dart
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../domain/entities/appointment_entity.dart';
 
@@ -18,28 +16,27 @@ class AppointmentModel extends AppointmentEntity {
     super.pagoBanco,
     super.pagoMetodo,
     super.pagoEstado,
-    super.pagoCedula,    // 🚀 NUEVO
-    super.pagoTelefono,  // 🚀 NUEVO
+    super.pagoCedula,
+    super.pagoTelefono,
   });
 
-  factory AppointmentModel.fromJson(Map<String, dynamic> json, String documentId) {
+  factory AppointmentModel.fromJson(Map<String, dynamic> json, String id) {
     return AppointmentModel(
-      id: documentId,
+      id: id,
       patientName: json['patientName'] ?? '',
-      address: json['address'] ?? '', 
-      patientBirthDate: (json['patientBirthDate'] as Timestamp).toDate(),
+      patientBirthDate: (json['patientBirthDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      address: json['address'] ?? '',
       representativeName: json['representativeName'] ?? '',
       email: json['email'] ?? '',
-      appointmentDateTime: (json['appointmentDateTime'] as Timestamp).toDate(),
+      appointmentDateTime: (json['appointmentDateTime'] as Timestamp?)?.toDate() ?? DateTime.now(),
       status: json['status'] ?? 'pending',
-      
-      pagoReferencia: json['pagoReferencia'] as String?,
+      pagoReferencia: json['pagoReferencia'],
       pagoMonto: (json['pagoMonto'] as num?)?.toDouble(),
-      pagoBanco: json['pagoBanco'] as String?,
-      pagoMetodo: json['pagoMetodo'] as String?,
-      pagoEstado: json['pagoEstado'] as String?,
-      pagoCedula: json['pagoCedula'] as String?,    // 🚀 NUEVO
-      pagoTelefono: json['pagoTelefono'] as String?,// 🚀 NUEVO
+      pagoBanco: json['pagoBanco'],
+      pagoMetodo: json['pagoMetodo'],
+      pagoEstado: json['pagoEstado'],
+      pagoCedula: json['pagoCedula'],
+      pagoTelefono: json['pagoTelefono'],
     );
   }
 
@@ -52,14 +49,14 @@ class AppointmentModel extends AppointmentEntity {
       'email': email,
       'appointmentDateTime': Timestamp.fromDate(appointmentDateTime),
       'status': status,
-      
       'pagoReferencia': pagoReferencia,
       'pagoMonto': pagoMonto,
       'pagoBanco': pagoBanco,
       'pagoMetodo': pagoMetodo,
       'pagoEstado': pagoEstado,
-      'pagoCedula': pagoCedula,    
+      'pagoCedula': pagoCedula,
       'pagoTelefono': pagoTelefono,
+      'createdAt': FieldValue.serverTimestamp(),
     };
   }
 }

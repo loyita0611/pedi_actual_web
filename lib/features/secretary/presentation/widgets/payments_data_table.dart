@@ -1,131 +1,133 @@
+// lib/features/secretary/presentation/widgets/payments_data_table.dart
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class PaymentsDataTable extends StatelessWidget {
   const PaymentsDataTable({super.key});
 
+  Future<void> _updatePaymentStatus(String paymentId, String status) async {
+    await FirebaseFirestore.instance.collection('pagos').doc(paymentId).update({
+      'status': status,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  void _showPaymentHistory(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.8,
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            const Text('Historial General de Pagos', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            const Divider(),
+            Expanded(
+              child: StreamBuilder<QuerySnapshot>(
+                // En el historial general quitamos el orderBy o usamos uno simple si ya tiene índice
+                stream: FirebaseFirestore.instance.collection('pagos').snapshots(),
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                  final docs = snapshot.data!.docs;
+                  return ListView.builder(
+                    itemCount: docs.length,
+                    itemBuilder: (context, index) {
+                      final data = docs[index].data() as Map<String, dynamic>;
+                      final monto = data['pagoMonto'] ?? 0.0;
+                      final banco = data['pagoBanco'] ?? 'N/A';
+                      return ListTile(
+                        title: Text(data['patientName'] ?? 'Sin nombre'),
+                        subtitle: Text('Banco: $banco | Estado: ${data['status']}'),
+                        trailing: Text('$monto Bs.'),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 10)],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Verificación y Validación de Pagos',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF4594A4))),
-          const SizedBox(height: 16),
-          Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance.collection('citas').snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snapshot.hasError) {
-                  return const Center(child: Text('Error al cargar pagos'));
-                }
-                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return const Center(child: Text('No hay registros de pagos.'));
-                }
-
-                // Filtrar localmente citas que tengan pagoEstado definido y no sea vacío
-                final docs = snapshot.data!.docs.where((doc) {
-                  final data = doc.data() as Map<String, dynamic>;
-                  return data.containsKey('pagoEstado') && data['pagoEstado'] != null;
-                }).toList();
-
-                if (docs.isEmpty) {
-                  return const Center(child: Text('No hay pagos pendientes o registrados.'));
-                }
-
-                return SingleChildScrollView(
-                  scrollDirection: Axis.vertical,
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: DataTable(
-                      headingRowColor: WidgetStateProperty.all(const Color(0xFFF4F7F6)),
-                      columns: const [
-                        DataColumn(label: Text('Paciente', style: TextStyle(fontWeight: FontWeight.bold))),
-                        DataColumn(label: Text('Referencia / Fecha', style: TextStyle(fontWeight: FontWeight.bold))),
-                        DataColumn(label: Text('Estado', style: TextStyle(fontWeight: FontWeight.bold))),
-                        DataColumn(label: Text('Comprobante', style: TextStyle(fontWeight: FontWeight.bold))),
-                        DataColumn(label: Text('Acciones', style: TextStyle(fontWeight: FontWeight.bold))),
-                      ],
-                      rows: docs.map((doc) {
-                        final data = doc.data() as Map<String, dynamic>;
-                        final patientName = data['patientName'] ?? 'Desconocido';
-                        final pagoEstado = data['pagoEstado'] ?? 'Pendiente';
-                        final date = (data['appointmentDateTime'] as Timestamp?)?.toDate();
-                        final dateString = date != null ? '${date.day}/${date.month}/${date.year}' : 'N/A';
-
-                        Color statusColor = Colors.orange;
-                        if (pagoEstado == 'verificado') statusColor = Colors.green;
-                        if (pagoEstado == 'rechazado') statusColor = Colors.red;
-
-                        return DataRow(cells: [
-                          DataCell(Text(patientName)),
-                          DataCell(Text('Ref #00${doc.id.substring(0, 4).toUpperCase()} - $dateString')),
-                          DataCell(
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(color: statusColor.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
-                              child: Text(pagoEstado.toString().toUpperCase(), style: TextStyle(color: statusColor, fontWeight: FontWeight.bold, fontSize: 12)),
-                            ),
-                          ),
-                          DataCell(
-                            IconButton(
-                              icon: const Icon(Icons.receipt_long, color: Color(0xFF4594A4)),
-                              onPressed: () {
-                                showDialog(
-                                  context: context,
-                                  builder: (_) => AlertDialog(
-                                    title: const Text('Comprobante Adjunto'),
-                                    content: Container(
-                                      width: 300,
-                                      height: 300,
-                                      color: Colors.grey.shade200,
-                                      child: const Center(child: Icon(Icons.image, size: 80, color: Colors.grey)),
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          DataCell(
-                            Row(
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.check_circle_outline, color: Colors.green),
-                                  tooltip: 'Verificar Pago',
-                                  onPressed: () {
-                                    FirebaseFirestore.instance.collection('citas').doc(doc.id).update({'pagoEstado': 'verificado'});
-                                  },
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.cancel_outlined, color: Colors.redAccent),
-                                  tooltip: 'Rechazar Pago',
-                                  onPressed: () {
-                                    FirebaseFirestore.instance.collection('citas').doc(doc.id).update({'pagoEstado': 'rechazado'});
-                                  },
-                                ),
-                              ],
-                            ),
-                          ),
-                        ]);
-                      }).toList(),
-                    ),
-                  ),
-                );
-              },
-            ),
+    return Column(
+      children: [
+        Align(
+          alignment: Alignment.topRight,
+          child: ElevatedButton.icon(
+            icon: const Icon(Icons.history),
+            label: const Text('Ver Historial'),
+            onPressed: () => _showPaymentHistory(context),
           ),
-        ],
-      ),
+        ),
+        Expanded(
+          child: StreamBuilder<QuerySnapshot>(
+            // 🚀 SOLUCIÓN: Quitamos el .orderBy() para evitar que Firestore bloquee la vista por falta de índice
+            stream: FirebaseFirestore.instance
+                .collection('pagos')
+                .where('status', isEqualTo: 'pending')
+                .snapshots(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                return const Center(child: Text('No hay pagos pendientes de verificación.'));
+              }
+
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columns: const [
+                    DataColumn(label: Text('Fecha')),
+                    DataColumn(label: Text('Paciente')),
+                    DataColumn(label: Text('Banco / Ref')),
+                    DataColumn(label: Text('Monto (Bs.)')),
+                    DataColumn(label: Text('Acciones')),
+                  ],
+                  rows: snapshot.data!.docs.map((doc) {
+                    final data = doc.data() as Map<String, dynamic>;
+                    
+                    String dateStr = 'N/A';
+                    if (data['date'] != null && data['date'] is Timestamp) {
+                      dateStr = (data['date'] as Timestamp).toDate().toString().substring(0, 10);
+                    }
+                    
+                    final monto = data['pagoMonto'] ?? 0.0;
+                    final banco = data['pagoBanco'] ?? '';
+                    final ref = data['pagoReferencia'] ?? '';
+
+                    return DataRow(cells: [
+                      DataCell(Text(dateStr)),
+                      DataCell(Text(data['patientName'] ?? '')),
+                      DataCell(Text('$banco (Ref: $ref)')),
+                      DataCell(Text('$monto Bs.')),
+                      DataCell(Row(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.check, color: Colors.green),
+                            tooltip: 'Aprobar Pago',
+                            onPressed: () => _updatePaymentStatus(doc.id, 'approved'),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close, color: Colors.red),
+                            tooltip: 'Rechazar Pago',
+                            onPressed: () => _updatePaymentStatus(doc.id, 'rejected'),
+                          ),
+                        ],
+                      )),
+                    ]);
+                  }).toList(),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }

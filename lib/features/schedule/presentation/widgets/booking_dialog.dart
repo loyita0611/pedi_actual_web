@@ -2,6 +2,8 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../domain/entities/appointment_entity.dart';
 
 class BookingDialog extends StatefulWidget {
@@ -35,11 +37,12 @@ class _BookingDialogState extends State<BookingDialog> {
   final _addressController = TextEditingController();
   final _representativeNameController = TextEditingController();
   final _emailController = TextEditingController();
+  final _phoneController = TextEditingController(); // 🚀 AQUÍ VA EL CONTROLADOR DEL TELÉFONO
   final _reasonController = TextEditingController(); 
   
   String? _selectedOriginBank; 
-  final _senderIdController = TextEditingController(); // Usado para Cédula
-  final _pagoTelefonoController = TextEditingController(); // Controlador para teléfono del pago
+  final _senderIdController = TextEditingController(); 
+  final _pagoTelefonoController = TextEditingController(); 
   final _amountPaidController = TextEditingController(); 
   final _referenceController = TextEditingController();   
 
@@ -49,6 +52,10 @@ class _BookingDialogState extends State<BookingDialog> {
   double _tasaBCV = 0.0;
   bool _isLoadingTasa = true;
   final double _montoUSD = 40.0;
+
+  String? _selectedPatientId;
+  bool _isCreatingNewPatient = false;
+  final String? userId = FirebaseAuth.instance.currentUser?.uid;
 
   final List<String> _bancosVenezuela = [
     'Banco de Venezuela',
@@ -67,15 +74,25 @@ class _BookingDialogState extends State<BookingDialog> {
     super.initState();
     _fetchBCVTasa();
 
-    // Se mantiene fijo el horario seleccionado en la cuadrícula
     _currentDateTime = widget.appointmentDateTime;
     _currentTimeString = widget.timeString;
+
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser != null) {
+      if (currentUser.displayName != null && currentUser.displayName!.isNotEmpty) {
+        _representativeNameController.text = currentUser.displayName!;
+      }
+      if (currentUser.email != null && currentUser.email!.isNotEmpty) {
+        _emailController.text = currentUser.email!;
+      }
+    }
 
     if (widget.appointment != null && widget.appointment!.id.isNotEmpty) {
       _patientNameController.text = widget.appointment!.patientName;
       _addressController.text = widget.appointment!.address;
       _representativeNameController.text = widget.appointment!.representativeName;
       _emailController.text = widget.appointment!.email;
+      _phoneController.text = widget.appointment!.phone; // 🚀 CARGAMOS EL TELÉFONO SI ES EDICIÓN
       _selectedBirthDate = widget.appointment!.patientBirthDate;
       _currentDateTime = widget.appointment!.appointmentDateTime;
 
@@ -111,6 +128,7 @@ class _BookingDialogState extends State<BookingDialog> {
     _addressController.dispose();
     _representativeNameController.dispose();
     _emailController.dispose();
+    _phoneController.dispose(); // 🚀 NO OLVIDAR DESHACERSE DEL CONTROLADOR
     _reasonController.dispose(); 
     _senderIdController.dispose();
     _pagoTelefonoController.dispose(); 
@@ -121,17 +139,16 @@ class _BookingDialogState extends State<BookingDialog> {
 
   @override
   Widget build(BuildContext context) {
-   
     String titleText = widget.appointment != null && widget.appointment!.id.isNotEmpty 
-        ? 'Modificar formulario para la cita médica' 
-        : 'Llenar formulario para la cita pediatríca';
+        ? 'Modificar Cita' 
+        : 'Agendar Cita Pediátrica';
     IconData headerIcon = Icons.assignment_outlined;
 
     if (_currentStep == 2) {
       titleText = 'Pasarela de Pago - Total: \$$_montoUSD';
       headerIcon = Icons.payment;
     } else if (_currentStep == 3) {
-      titleText = 'Detalles del Pago Realizado';
+      titleText = 'Registrar Pago';
       headerIcon = Icons.account_balance_wallet_outlined;
     }
 
@@ -154,7 +171,7 @@ class _BookingDialogState extends State<BookingDialog> {
                     children: [
                       CircularProgressIndicator(color: Colors.teal),
                       SizedBox(height: 16),
-                      Text("Procesando cambios en el servidor...", style: TextStyle(color: Colors.teal, fontWeight: FontWeight.bold)),
+                      Text("Procesando cita y verificando pago...", style: TextStyle(color: Colors.teal, fontWeight: FontWeight.bold)),
                     ],
                   ),
                 ),
@@ -175,7 +192,7 @@ class _BookingDialogState extends State<BookingDialog> {
         ElevatedButton(
           style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
           onPressed: _handleNavigationAndSubmit,
-          child: Text(_currentStep == 1 ? 'Continuar al Pago' : _currentStep == 2 ? 'Ya pagué' : 'Confirmar Cambios'),
+          child: Text(_currentStep == 1 ? 'Continuar al Pago' : _currentStep == 2 ? 'Ya pagué' : 'Confirmar Cita'),
         ),
       ],
     );
@@ -195,63 +212,166 @@ class _BookingDialogState extends State<BookingDialog> {
       key: _formKey,
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Divider(),
           const SizedBox(height: 8),
-          
-          // 🚀 SE ELIMINÓ EL DROPDOWN DE SELECCIÓN DE HORA DE AQUÍ
 
           TextFormField(
-            controller: _patientNameController,
-            decoration: const InputDecoration(labelText: 'Nombre y Apellido del Paciente (Niño/a)', prefixIcon: Icon(Icons.person_outline), border: OutlineInputBorder()),
-            validator: (value) => value!.isEmpty ? 'Por favor ingresa el nombre del niño' : null,
-          ),
-          const SizedBox(height: 16),
-          InkWell(
-            onTap: () async {
-              final DateTime? picked = await showDatePicker(
-                context: context,
-                initialDate: _selectedBirthDate ?? DateTime.now().subtract(const Duration(days: 365)),
-                firstDate: DateTime(2010),
-                lastDate: DateTime.now(),
-              );
-              if (picked != null) setState(() { _selectedBirthDate = picked; });
-            },
-            child: InputDecorator(
-              decoration: InputDecoration(labelText: 'Fecha de Nacimiento', prefixIcon: const Icon(Icons.cake_outlined, color: Colors.teal), border: const OutlineInputBorder(), errorText: _selectedBirthDate == null ? 'Selecciona la fecha' : null),
-              child: Text(_selectedBirthDate == null ? '' : '${_selectedBirthDate!.day}/${_selectedBirthDate!.month}/${_selectedBirthDate!.year}'),
-            ),
-          ),
-          const SizedBox(height: 16),
-          TextFormField(
-            controller: _addressController,
-            decoration: const InputDecoration(labelText: 'Dirección de Habitación', prefixIcon: Icon(Icons.home_outlined), border: OutlineInputBorder()),
-            validator: (value) => value!.isEmpty ? 'Por favor ingresa la dirección' : null,
-          ),
-          const SizedBox(height: 16),
-          TextFormField(
             controller: _representativeNameController,
-            decoration: const InputDecoration(labelText: 'Nombre y Apellido del Representante', prefixIcon: Icon(Icons.assignment_ind_outlined), border: OutlineInputBorder()),
-            validator: (value) => value!.isEmpty ? 'Por favor ingresa el nombre del representante' : null,
+            decoration: const InputDecoration(
+              labelText: 'Nombre y Apellido del Representante', 
+              prefixIcon: Icon(Icons.assignment_ind_outlined), 
+              border: OutlineInputBorder()
+            ),
+            validator: (value) => value!.isEmpty ? 'Requerido' : null,
           ),
           const SizedBox(height: 16),
+          
+          // 🚀 CAMPO DE TELÉFONO PARA EL REPRESENTANTE/CONTACTO
           TextFormField(
-            controller: _emailController,
-            keyboardType: TextInputType.emailAddress,
-            decoration: const InputDecoration(labelText: 'Correo Electrónico', prefixIcon: Icon(Icons.email_outlined), border: OutlineInputBorder()),
-            validator: (value) {
-              if (value!.isEmpty) return 'Por favor ingresa el correo';
-              if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
-                return 'Ingresa un correo electrónico válido';
-              }
-              return null;
-            },
+            controller: _phoneController,
+            keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(
+              labelText: 'Teléfono de Contacto', 
+              prefixIcon: Icon(Icons.phone), 
+              border: OutlineInputBorder()
+            ),
+            validator: (value) => value!.isEmpty ? 'Requerido' : null,
           ),
           const SizedBox(height: 16),
+
+          if (userId != null) ...[
+            StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('patients')
+                  .where('representativeId', isEqualTo: userId)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                final patients = snapshot.data?.docs ?? [];
+                
+                if (patients.isEmpty && !_isCreatingNewPatient) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    setState(() => _isCreatingNewPatient = true);
+                  });
+                }
+
+                return Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        isExpanded: true,
+                        initialValue: _selectedPatientId,
+                        decoration: const InputDecoration(
+                          labelText: 'Seleccionar Niño/a',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.child_care, color: Colors.teal),
+                        ),
+                        hint: const Text('Elija un paciente registrado...'),
+                        items: patients.map((doc) {
+                          final data = doc.data() as Map<String, dynamic>;
+                          return DropdownMenuItem(
+                            value: doc.id,
+                            child: Text(data['patientName'] ?? 'Sin nombre'),
+                          );
+                        }).toList(),
+                        onChanged: _isCreatingNewPatient ? null : (value) {
+                          setState(() {
+                            _selectedPatientId = value;
+                            final selectedDoc = patients.firstWhere((doc) => doc.id == value);
+                            final data = selectedDoc.data() as Map<String, dynamic>;
+                            
+                            _patientNameController.text = data['patientName'] ?? '';
+                            _addressController.text = data['address'] ?? '';
+                            if (data['patientBirthDate'] != null) {
+                              _selectedBirthDate = (data['patientBirthDate'] as Timestamp).toDate();
+                            }
+                            if (data['representativeName'] != null && data['representativeName'].toString().isNotEmpty) {
+                              _representativeNameController.text = data['representativeName'];
+                            }
+                            if (data['email'] != null && data['email'].toString().isNotEmpty) {
+                              _emailController.text = data['email'];
+                            }
+                            // 🚀 AUTOCOMPLETAMOS EL TELÉFONO
+                            if (data['phone'] != null && data['phone'].toString().isNotEmpty) {
+                              _phoneController.text = data['phone'];
+                            }
+                          });
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      tooltip: _isCreatingNewPatient ? 'Seleccionar existente' : 'Añadir nuevo hijo/a',
+                      icon: Icon(_isCreatingNewPatient ? Icons.list : Icons.person_add, color: Colors.teal, size: 30),
+                      onPressed: () {
+                        setState(() {
+                          _isCreatingNewPatient = !_isCreatingNewPatient;
+                          if (_isCreatingNewPatient) {
+                            _selectedPatientId = null;
+                            _patientNameController.clear();
+                            _addressController.clear();
+                            _selectedBirthDate = null;
+                          }
+                        });
+                      },
+                    ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
+
+          if (_isCreatingNewPatient) ...[
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(border: Border.all(color: Colors.teal.shade200), borderRadius: BorderRadius.circular(8), color: Colors.teal.shade50),
+              child: Column(
+                children: [
+                  const Text('Datos del Nuevo Paciente', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.teal)),
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    controller: _patientNameController,
+                    decoration: const InputDecoration(labelText: 'Nombre y Apellido del Niño/a', prefixIcon: Icon(Icons.person_outline), border: OutlineInputBorder(), isDense: true),
+                    validator: (value) => value!.isEmpty ? 'Requerido' : null,
+                  ),
+                  const SizedBox(height: 12),
+                  InkWell(
+                    onTap: () async {
+                      final DateTime? picked = await showDatePicker(
+                        context: context,
+                        initialDate: _selectedBirthDate ?? DateTime.now().subtract(const Duration(days: 365)),
+                        firstDate: DateTime(2010),
+                        lastDate: DateTime.now(),
+                      );
+                      if (picked != null) setState(() { _selectedBirthDate = picked; });
+                    },
+                    child: InputDecorator(
+                      decoration: InputDecoration(labelText: 'Fecha de Nacimiento', prefixIcon: const Icon(Icons.cake_outlined, color: Colors.teal), border: const OutlineInputBorder(), isDense: true, errorText: _selectedBirthDate == null ? 'Requerido' : null),
+                      child: Text(_selectedBirthDate == null ? '' : '${_selectedBirthDate!.day}/${_selectedBirthDate!.month}/${_selectedBirthDate!.year}'),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _addressController,
+                    decoration: const InputDecoration(labelText: 'Dirección de Habitación', prefixIcon: Icon(Icons.home_outlined), border: OutlineInputBorder(), isDense: true),
+                    validator: (value) => value!.isEmpty ? 'Requerido' : null,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+
           TextFormField(
             controller: _reasonController,
             maxLines: 2, 
-            decoration: const InputDecoration(labelText: 'Motivo de la Consulta', border: OutlineInputBorder()),
+            decoration: const InputDecoration(labelText: 'Motivo de la Consulta (Opcional)', border: OutlineInputBorder(), prefixIcon: Icon(Icons.medical_services_outlined)),
           ),
         ],
       ),
@@ -347,8 +467,14 @@ class _BookingDialogState extends State<BookingDialog> {
 
   void _handleNavigationAndSubmit() async {
     if (_currentStep == 1) {
+      if (!_isCreatingNewPatient && _selectedPatientId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Por favor seleccione un paciente o cree uno nuevo.')));
+        return;
+      }
       if (_formKey.currentState!.validate() && _selectedBirthDate != null) {
         setState(() { _currentStep = 2; });
+      } else if (_selectedBirthDate == null && _isCreatingNewPatient) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('La fecha de nacimiento es requerida')));
       }
     } else if (_currentStep == 2) {
       setState(() { _currentStep = 3; });
@@ -363,6 +489,7 @@ class _BookingDialogState extends State<BookingDialog> {
           address: _addressController.text.trim(),
           representativeName: _representativeNameController.text.trim(),
           email: _emailController.text.trim(),
+          phone: _phoneController.text.trim(), // 🚀 AQUÍ RESOLVEMOS EL ERROR 4
           appointmentDateTime: _currentDateTime, 
           status: 'pending',
           
@@ -370,10 +497,12 @@ class _BookingDialogState extends State<BookingDialog> {
           pagoMonto: double.tryParse(_amountPaidController.text.trim()) ?? 0.0,
           pagoBanco: _selectedOriginBank,
           pagoMetodo: _selectedPaymentMethod,
-          pagoEstado: 'pendiente_verificacion',
+          pagoEstado: 'pending', 
           pagoCedula: _senderIdController.text.trim(),       
           pagoTelefono: _pagoTelefonoController.text.trim(), 
         );
+
+        widget.onConfirmBooking(updatedAppointment);
 
         final String correoPaciente = _emailController.text.trim();
         final String nombrePaciente = _patientNameController.text.trim();
@@ -382,10 +511,8 @@ class _BookingDialogState extends State<BookingDialog> {
         const String numeroDoctora = "+58 412-5555555"; 
 
         try {
-          widget.onConfirmBooking(updatedAppointment);
-
           final urlCorreo = Uri.parse('https://api.emailjs.com/api/v1.0/email/send');
-          final response = await http.post(
+          await http.post(
             urlCorreo,
             headers: {'Content-Type': 'application/json'},
             body: json.encode({
@@ -402,19 +529,10 @@ class _BookingDialogState extends State<BookingDialog> {
             }),
           ).timeout(const Duration(seconds: 5));
 
-          if (response.statusCode != 200) {
-            debugPrint("⚠️ EmailJS devolvió una respuesta no exitosa: ${response.body}");
-          }
-
-          if (mounted) {
-            Navigator.of(context).pop(); 
-          }
-
+          if (mounted) Navigator.of(context).pop(); 
         } catch (e) {
-          if (mounted) {
-            setState(() { _isSaving = false; });
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: Colors.redAccent));
-          }
+          debugPrint("Error EmailJS: $e");
+          if (mounted) Navigator.of(context).pop(); 
         }
       }
     }

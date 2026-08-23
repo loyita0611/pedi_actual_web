@@ -8,7 +8,8 @@ class AppointmentEntity extends Equatable {
   final DateTime patientBirthDate; 
   final String address;           
   final String representativeName;
-  final String email;             
+  final String email; 
+  final String phone;            
   final DateTime appointmentDateTime; 
   final String status;            
 
@@ -18,8 +19,8 @@ class AppointmentEntity extends Equatable {
   final String? pagoBanco;
   final String? pagoMetodo;
   final String? pagoEstado;
-  final String? pagoCedula;    // 🚀 NUEVO
-  final String? pagoTelefono;  // 🚀 NUEVO
+  final String? pagoCedula;    
+  final String? pagoTelefono;  
 
   const AppointmentEntity({
     required this.id,
@@ -28,6 +29,7 @@ class AppointmentEntity extends Equatable {
     required this.address,
     required this.representativeName,
     required this.email,
+    required this.phone,
     required this.appointmentDateTime,
     required this.status,
     this.pagoReferencia,
@@ -35,8 +37,8 @@ class AppointmentEntity extends Equatable {
     this.pagoBanco,
     this.pagoMetodo,
     this.pagoEstado,
-    this.pagoCedula,    // 🚀 NUEVO
-    this.pagoTelefono,  // 🚀 NUEVO
+    this.pagoCedula,    
+    this.pagoTelefono,  
   });
 
   @override

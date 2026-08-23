@@ -1,195 +1,131 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-class PatientDirectoryWidget extends StatefulWidget {
+class PatientDirectoryWidget extends StatelessWidget {
   const PatientDirectoryWidget({super.key});
 
-  @override
-  State<PatientDirectoryWidget> createState() => _PatientDirectoryWidgetState();
-}
-
-class _PatientDirectoryWidgetState extends State<PatientDirectoryWidget> {
-  String _searchQuery = '';
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Directorio de Pacientes',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF4594A4)),
-                ),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    _showCreatePatientDialog(context);
-                  },
-                  icon: const Icon(Icons.person_add),
-                  label: const Text('Nuevo Paciente'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF4594A4),
-                    foregroundColor: Colors.white,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              onChanged: (value) {
-                setState(() {
-                  _searchQuery = value.toLowerCase();
-                });
-              },
-              decoration: InputDecoration(
-                hintText: 'Buscar por nombre, correo o teléfono...',
-                prefixIcon: const Icon(Icons.search),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                filled: true,
-                fillColor: Colors.grey.shade100,
-              ),
-            ),
-            const SizedBox(height: 24),
-            Expanded(
-              child: StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('users')
-                    .where('role', isEqualTo: 'patient')
-                    .snapshots(),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-
-                  if (snapshot.hasError) {
-                    return const Center(child: Text('Error al cargar pacientes.'));
-                  }
-
-                  if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                    return const Center(child: Text('No hay pacientes registrados.'));
-                  }
-
-                  final docs = snapshot.data!.docs;
-
-                  // Filtrado local según la búsqueda
-                  final filteredDocs = docs.where((doc) {
-                    final data = doc.data() as Map<String, dynamic>;
-                    final name = (data['name'] ?? '').toString().toLowerCase();
-                    final email = (data['email'] ?? '').toString().toLowerCase();
-                    final phone = (data['phone'] ?? '').toString().toLowerCase();
-
-                    return name.contains(_searchQuery) ||
-                        email.contains(_searchQuery) ||
-                        phone.contains(_searchQuery);
-                  }).toList();
-
-                  if (filteredDocs.isEmpty) {
-                    return const Center(
-                        child: Text('No se encontraron pacientes que coincidan con la búsqueda.'));
-                  }
-
-                  return ListView.separated(
-                    itemCount: filteredDocs.length,
-                    separatorBuilder: (context, index) => const Divider(),
-                    itemBuilder: (context, index) {
-                      final data = filteredDocs[index].data() as Map<String, dynamic>;
-                      final name = data['name'] ?? 'Desconocido';
-                      final phone = data['phone'] ?? 'No especificado';
-                      final email = data['email'] ?? 'No especificado';
-
-                      return ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: const Color(0xFFEAA171).withValues(alpha: 0.2),
-                          child: Text(
-                              name.toString().isNotEmpty
-                                  ? name.toString()[0].toUpperCase()
-                                  : '?',
-                              style: const TextStyle(
-                                  color: Color(0xFFEAA171),
-                                  fontWeight: FontWeight.bold)),
-                        ),
-                        title: Text(name,
-                            style: const TextStyle(fontWeight: FontWeight.bold)),
-                        subtitle: Text('Tel: $phone • Correo: $email'),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.edit_outlined, color: Colors.grey),
-                          onPressed: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                    content: Text(
-                                        'Editar datos del paciente (Próximamente)')));
-                          },
-                        ),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showCreatePatientDialog(BuildContext context) {
-    final nameController = TextEditingController();
+  void _showNewPatientDialog(BuildContext context) {
+    final repController = TextEditingController();
+    final idController = TextEditingController();
     final emailController = TextEditingController();
     final phoneController = TextEditingController();
+    final patientController = TextEditingController();
 
     showDialog(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Registrar Nuevo Paciente'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-                controller: nameController,
-                decoration:
-                    const InputDecoration(labelText: 'Nombre Completo')),
-            TextField(
-                controller: emailController,
-                decoration:
-                    const InputDecoration(labelText: 'Correo Electrónico')),
-            TextField(
-                controller: phoneController,
-                decoration: const InputDecoration(labelText: 'Teléfono')),
-          ],
+      builder: (context) => AlertDialog(
+        title: const Text('Nuevo Paciente'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: repController, decoration: const InputDecoration(labelText: 'Nombre Representante')),
+              TextField(controller: idController, decoration: const InputDecoration(labelText: 'Cédula')),
+              TextField(controller: emailController, decoration: const InputDecoration(labelText: 'Correo')),
+              TextField(controller: phoneController, decoration: const InputDecoration(labelText: 'Teléfono')),
+              TextField(controller: patientController, decoration: const InputDecoration(labelText: 'Nombre del Paciente')),
+            ],
+          ),
         ),
         actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancelar')),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
           ElevatedButton(
             onPressed: () async {
-              if (nameController.text.isNotEmpty) {
-                await FirebaseFirestore.instance.collection('users').add({
-                  'name': nameController.text,
-                  'email': emailController.text,
-                  'phone': phoneController.text,
-                  'role': 'patient',
-                  'createdAt': FieldValue.serverTimestamp(),
-                });
-                if (dialogContext.mounted) {
-                  Navigator.pop(dialogContext);
-                  ScaffoldMessenger.of(dialogContext).showSnackBar(
-                      const SnackBar(
-                          content: Text('Paciente registrado exitosamente')));
-                }
-              }
+              await FirebaseFirestore.instance.collection('patients').add({
+                'representativeName': repController.text,
+                'idDocument': idController.text,
+                'email': emailController.text,
+                'phone': phoneController.text,
+                'patientName': patientController.text,
+                'createdAt': FieldValue.serverTimestamp(),
+              });
+              if (!context.mounted) return;
+Navigator.pop(context);
+              Navigator.pop(context);
             },
             child: const Text('Guardar'),
           ),
         ],
       ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Directorio de Pacientes', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.add),
+                label: const Text('Nuevo Paciente'),
+                onPressed: () => _showNewPatientDialog(context),
+              ),
+            ],
+          ),
+        ),
+        // 5. AUTOCOMPLETE PARA BUSCAR PACIENTES AL AGENDAR (Puedes mover esto a tu diálogo de citas)
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Autocomplete<Map<String, dynamic>>(
+            optionsBuilder: (TextEditingValue textEditingValue) async {
+              if (textEditingValue.text.isEmpty) return const Iterable<Map<String, dynamic>>.empty();
+              final snapshot = await FirebaseFirestore.instance
+                  .collection('patients')
+                  .where('patientName', isGreaterThanOrEqualTo: textEditingValue.text)
+                  .where('patientName', isLessThanOrEqualTo: '${textEditingValue.text}\uf8ff')
+                  .get();
+              return snapshot.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
+            },
+            displayStringForOption: (option) => option['patientName'] ?? '',
+            fieldViewBuilder: (context, controller, focusNode, onEditingComplete) {
+              return TextField(
+                controller: controller,
+                focusNode: focusNode,
+                decoration: const InputDecoration(
+                  labelText: 'Buscar paciente para nueva cita...',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.search),
+                ),
+              );
+            },
+            onSelected: (selection) {
+              // Lógica al seleccionar el paciente para la cita
+              debugPrint('Paciente seleccionado ID: ${selection['id']}');
+            },
+          ),
+        ),
+        Expanded(
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('patients').orderBy('patientName').snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+              return ListView.builder(
+                itemCount: snapshot.data!.docs.length,
+                itemBuilder: (context, index) {
+                  final data = snapshot.data!.docs[index].data() as Map<String, dynamic>;
+                  return Card(
+                    child: ListTile(
+                      title: Text(data['patientName'] ?? 'Sin nombre'),
+                      subtitle: Text('Rep: ${data['representativeName']} | Cel: ${data['phone']}'),
+                      trailing: ElevatedButton(
+                        child: const Text('Historial Clínico'),
+                        onPressed: () {
+                          // Aquí llamas a getPatientHistoryStats() detallado en la respuesta anterior
+                        },
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }

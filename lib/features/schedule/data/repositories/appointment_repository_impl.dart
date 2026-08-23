@@ -12,30 +12,48 @@ class AppointmentRepositoryImpl implements AppointmentRepository {
 
   @override
   Future<List<AppointmentEntity>> getAppointmentsByDate(DateTime date) async {
-    return await remoteDataSource.getAppointmentsByDate(date);
+    try {
+      final appointmentModels = await remoteDataSource.getAppointmentsByDate(date);
+      return appointmentModels; // AppointmentModel hereda de AppointmentEntity, por lo que es compatible
+    } catch (e) {
+      throw Exception('Error al obtener las citas: $e');
+    }
   }
 
   @override
   Future<void> bookAppointment(AppointmentEntity appointment) async {
-    final appointmentModel = AppointmentModel(
-      id: appointment.id,
-      patientName: appointment.patientName,
-      patientBirthDate: appointment.patientBirthDate,
-      address: appointment.address,
-      representativeName: appointment.representativeName,
-      email: appointment.email,
-      appointmentDateTime: appointment.appointmentDateTime,
-      status: appointment.status,
-      
-      pagoReferencia: appointment.pagoReferencia,
-      pagoMonto: appointment.pagoMonto,
-      pagoBanco: appointment.pagoBanco,
-      pagoMetodo: appointment.pagoMetodo,
-      pagoEstado: appointment.pagoEstado,
-      pagoCedula: appointment.pagoCedula,        
-      pagoTelefono: appointment.pagoTelefono,    
-    );
+    try {
+      // Convertimos la entidad a modelo para enviarla al datasource
+      final appointmentModel = AppointmentModel(
+        id: appointment.id,
+        patientName: appointment.patientName,
+        patientBirthDate: appointment.patientBirthDate,
+        address: appointment.address,
+        representativeName: appointment.representativeName,
+        email: appointment.email,
+        appointmentDateTime: appointment.appointmentDateTime,
+        status: appointment.status,
+        pagoReferencia: appointment.pagoReferencia,
+        pagoMonto: appointment.pagoMonto,
+        pagoBanco: appointment.pagoBanco,
+        pagoMetodo: appointment.pagoMetodo,
+        pagoEstado: appointment.pagoEstado,
+        pagoCedula: appointment.pagoCedula,
+        pagoTelefono: appointment.pagoTelefono,
+      );
 
-    return await remoteDataSource.bookAppointment(appointmentModel);
+      await remoteDataSource.bookAppointment(appointmentModel);
+    } catch (e) {
+      throw Exception('Error al agendar la cita: $e');
+    }
+  }
+
+  @override
+  Future<void> cancelAppointment(String appointmentId) async {
+    try {
+      await remoteDataSource.cancelAppointment(appointmentId);
+    } catch (e) {
+      throw Exception('Error al cancelar la cita: $e');
+    }
   }
 }
