@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter_typeahead/flutter_typeahead.dart';
 
 class CreateAppointmentDialog extends StatefulWidget {
   const CreateAppointmentDialog({super.key});
@@ -11,8 +12,25 @@ class CreateAppointmentDialog extends StatefulWidget {
 class _CreateAppointmentDialogState extends State<CreateAppointmentDialog> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
+  final _phoneController = TextEditingController();
+  final _repNameController = TextEditingController();
+  
   DateTime _selectedDate = DateTime.now();
   TimeOfDay _selectedTime = const TimeOfDay(hour: 9, minute: 0);
+  
+  String? _selectedPatientId;
+
+  Future<List<Map<String, dynamic>>> _getPatientSuggestions(String query) async {
+    if (query.isEmpty) return [];
+    
+    final snapshot = await FirebaseFirestore.instance
+        .collection('patients')
+        .where('patientName', isGreaterThanOrEqualTo: query)
+        .where('patientName', isLessThanOrEqualTo: '$query\uf8ff')
+        .get();
+        
+    return snapshot.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -32,11 +50,59 @@ class _CreateAppointmentDialogState extends State<CreateAppointmentDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              TypeAheadField<Map<String, dynamic>>(
+                suggestionsCallback: (pattern) => _getPatientSuggestions(pattern),
+                builder: (context, controller, focusNode) {
+                  if (controller.text != _nameController.text) {
+                     controller.text = _nameController.text;
+                  }
+                  
+                  return TextFormField(
+                    controller: controller,
+                    focusNode: focusNode,
+                    decoration: InputDecoration(
+                      labelText: 'Nombre del Paciente (Buscar o Crear)',
+                      prefixIcon: const Icon(Icons.person),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    onChanged: (val) {
+                       _nameController.text = val;
+                       _selectedPatientId = null;
+                    },
+                    validator: (value) => value == null || value.isEmpty ? 'Requerido' : null,
+                  );
+                },
+                itemBuilder: (context, suggestion) {
+                  return ListTile(
+                    title: Text(suggestion['patientName'] ?? ''),
+                    subtitle: Text('Rep: ${suggestion['representativeName'] ?? ''} - Tel: ${suggestion['phone'] ?? ''}'),
+                  );
+                },
+                onSelected: (suggestion) {
+                  setState(() {
+                    _selectedPatientId = suggestion['id'];
+                    _nameController.text = suggestion['patientName'] ?? '';
+                    _phoneController.text = suggestion['phone'] ?? '';
+                    _repNameController.text = suggestion['representativeName'] ?? '';
+                  });
+                },
+              ),
+              const SizedBox(height: 16),
               TextFormField(
-                controller: _nameController,
+                controller: _repNameController,
                 decoration: InputDecoration(
-                  labelText: 'Nombre del Paciente',
-                  prefixIcon: const Icon(Icons.person),
+                  labelText: 'Nombre del Representante',
+                  prefixIcon: const Icon(Icons.family_restroom),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                validator: (value) => value == null || value.isEmpty ? 'Requerido' : null,
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _phoneController,
+                decoration: InputDecoration(
+                  labelText: 'Teléfono de Contacto',
+                  prefixIcon: const Icon(Icons.phone),
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                 ),
                 validator: (value) => value == null || value.isEmpty ? 'Requerido' : null,
@@ -100,15 +166,26 @@ class _CreateAppointmentDialogState extends State<CreateAppointmentDialog> {
                 _selectedTime.minute,
               );
 
+              String finalPatientId = _selectedPatientId ?? '';
+              if (finalPatientId.isEmpty) {
+                final newPatient = await FirebaseFirestore.instance.collection('patients').add({
+                  'patientName': _nameController.text,
+                  'representativeName': _repNameController.text,
+                  'phone': _phoneController.text,
+                  'createdAt': FieldValue.serverTimestamp(),
+                });
+                finalPatientId = newPatient.id;
+              }
+
               await FirebaseFirestore.instance.collection('citas').add({
+                'patientId': finalPatientId,
                 'patientName': _nameController.text,
-                'patientBirthDate': Timestamp.now(), // Placeholder
-                'address': 'Asistida en Recepción',
-                'representativeName': 'Asistida',
-                'email': 'N/A',
+                'representativeName': _repNameController.text,
+                'phone': _phoneController.text,
                 'appointmentDateTime': Timestamp.fromDate(appointmentDateTime),
                 'status': 'confirmed',
                 'pagoEstado': 'Pendiente',
+                'createdAt': FieldValue.serverTimestamp(),
               });
 
               if (context.mounted) {

@@ -192,6 +192,7 @@ class _SchedulePageState extends State<SchedulePage> {
       patientName: '',
       patientBirthDate: DateTime.now().subtract(const Duration(days: 365)),
       address: '',
+      phone:'',
       representativeName: '',
       email: '',
       appointmentDateTime: appointmentDateTime, // Arrastra la hora correcta cliqueada

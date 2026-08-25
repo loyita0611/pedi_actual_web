@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
 
 class DailyDashboardWidget extends StatelessWidget {
   const DailyDashboardWidget({super.key});
@@ -81,7 +82,7 @@ class DailyDashboardWidget extends StatelessWidget {
                           (data['appointmentDateTime'] as Timestamp?)
                               ?.toDate();
                       final timeStr = appointmentDt != null
-                          ? '${appointmentDt.hour.toString().padLeft(2, '0')}:${appointmentDt.minute.toString().padLeft(2, '0')}'
+                          ? DateFormat('hh:mm a').format(appointmentDt)
                           : 'N/A';
                       final pagoEstado = data['pagoEstado'] ?? 'Pendiente';
 

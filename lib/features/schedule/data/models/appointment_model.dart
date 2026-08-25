@@ -7,6 +7,7 @@ class AppointmentModel extends AppointmentEntity {
     required super.patientName,
     required super.patientBirthDate,
     required super.address,
+    required super.phone,
     required super.representativeName,
     required super.email,
     required super.appointmentDateTime,
@@ -18,7 +19,7 @@ class AppointmentModel extends AppointmentEntity {
     super.pagoEstado,
     super.pagoCedula,
     super.pagoTelefono,
-  });
+  }); 
 
   factory AppointmentModel.fromJson(Map<String, dynamic> json, String id) {
     return AppointmentModel(
@@ -27,6 +28,7 @@ class AppointmentModel extends AppointmentEntity {
       patientBirthDate: (json['patientBirthDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
       address: json['address'] ?? '',
       representativeName: json['representativeName'] ?? '',
+      phone: json['phone'] ?? '', 
       email: json['email'] ?? '',
       appointmentDateTime: (json['appointmentDateTime'] as Timestamp?)?.toDate() ?? DateTime.now(),
       status: json['status'] ?? 'pending',
@@ -47,6 +49,7 @@ class AppointmentModel extends AppointmentEntity {
       'address': address,
       'representativeName': representativeName,
       'email': email,
+      'phone': phone,
       'appointmentDateTime': Timestamp.fromDate(appointmentDateTime),
       'status': status,
       'pagoReferencia': pagoReferencia,

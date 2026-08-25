@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_auth/firebase_auth.dart'; 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart'; 
 import 'package:pedia_actual/features/schedule/presentation/pages/schedule_page.dart';
 import 'package:pedia_actual/features/schedule/presentation/pages/mis_pagos_page.dart'; 
@@ -508,13 +509,30 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
             Card(
               elevation: 0,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.grey.shade300)),
-              child: SwitchListTile(
-                activeThumbColor: const Color(0xFF4594A4),
-                secondary: const Icon(Icons.notifications_active_outlined, color: Color(0xFF4594A4)),
-                title: const Text('Notificaciones por Correo'),
-                subtitle: const Text('Recibir recordatorios de tus citas programadas'),
-                value: true, 
-                onChanged: (bool value) {},
+              child: StreamBuilder<DocumentSnapshot>(
+                stream: FirebaseFirestore.instance.collection('users').doc(FirebaseAuth.instance.currentUser?.uid ?? 'unknown').snapshots(),
+                builder: (context, snapshot) {
+                  bool wantNotifications = true;
+                  if (snapshot.hasData && snapshot.data!.exists) {
+                    wantNotifications = (snapshot.data!.data() as Map<String, dynamic>)['notificationsEnabled'] ?? true;
+                  }
+                  return SwitchListTile(
+                    activeThumbColor: const Color(0xFF4594A4),
+                    secondary: const Icon(Icons.notifications_active_outlined, color: Color(0xFF4594A4)),
+                    title: const Text('Notificaciones por Correo'),
+                    subtitle: const Text('Recibir recordatorios de tus citas programadas'),
+                    value: wantNotifications, 
+                    onChanged: (bool value) async {
+                      final user = FirebaseAuth.instance.currentUser;
+                      if (user != null) {
+                        await FirebaseFirestore.instance.collection('users').doc(user.uid).set(
+                          {'notificationsEnabled': value},
+                          SetOptions(merge: true)
+                        );
+                      }
+                    },
+                  );
+                },
               ),
             ),
           ],

@@ -30,6 +30,7 @@ class AppointmentRepositoryImpl implements AppointmentRepository {
         patientBirthDate: appointment.patientBirthDate,
         address: appointment.address,
         representativeName: appointment.representativeName,
+        phone: appointment.phone,
         email: appointment.email,
         appointmentDateTime: appointment.appointmentDateTime,
         status: appointment.status,
