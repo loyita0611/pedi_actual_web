@@ -1,44 +1,60 @@
 // lib/features/schedule/presentation/bloc/schedule_state.dart
-
 import 'package:equatable/equatable.dart';
+
 import '../../domain/entities/appointment_entity.dart';
 
-abstract class ScheduleState extends Equatable {
+sealed class ScheduleState extends Equatable {
   const ScheduleState();
-  
   @override
-  List<Object?> get props => [];
+  List<Object?> get props => const [];
 }
 
-// Estado inicial antes de cargar cualquier dato
-class ScheduleInitial extends ScheduleState {}
+class ScheduleInitial extends ScheduleState {
+  const ScheduleInitial();
+}
 
-// Estado de carga (Loading spinner en la pantalla)
-class ScheduleLoading extends ScheduleState {}
+class ScheduleLoading extends ScheduleState {
+  const ScheduleLoading();
+}
 
-// ¡El estado clave! Cuando las citas del día ya están listas
 class ScheduleLoaded extends ScheduleState {
+  const ScheduleLoaded({
+    required this.appointments,
+    required this.selectedDate,
+    this.mensajeExito,
+  });
+
   final List<AppointmentEntity> appointments;
   final DateTime selectedDate;
 
-  const ScheduleLoaded({required this.appointments, required this.selectedDate});
+  /// Aviso puntual para mostrar una sola vez (se limpia al recargar).
+  /// Antes existia un estado `AppointmentBookedSuccess` que la pantalla
+  /// escuchaba pero que el bloc no emitia nunca, asi que el mensaje
+  /// "Cita registrada con exito" no aparecia jamas.
+  final String? mensajeExito;
+
+  ScheduleLoaded sinMensaje() =>
+      ScheduleLoaded(appointments: appointments, selectedDate: selectedDate);
 
   @override
-  List<Object?> get props => [appointments, selectedDate];
+  List<Object?> get props => [appointments, selectedDate, mensajeExito];
 }
 
-// Estado temporal cuando se está procesando una nueva reserva
-class AppointmentBookingInProgress extends ScheduleState {}
+class ScheduleWorking extends ScheduleState {
+  const ScheduleWorking(this.mensaje);
+  final String mensaje;
+  @override
+  List<Object?> get props => [mensaje];
+}
 
-// Estado de éxito al agendar
-class AppointmentBookedSuccess extends ScheduleState {}
-
-// Manejo de errores de Firebase o de red
 class ScheduleError extends ScheduleState {
+  const ScheduleError(this.message, {this.previo});
   final String message;
 
-  const ScheduleError(this.message);
+  /// Estado anterior, para poder volver a pintar la grilla en vez de dejar
+  /// la pantalla en blanco con un volcado de error.
+  final ScheduleLoaded? previo;
 
   @override
-  List<Object?> get props => [message];
+  List<Object?> get props => [message, previo];
 }

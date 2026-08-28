@@ -1,7 +1,13 @@
-import 'package:flutter/material.dart';
+// lib/features/secretary/presentation/widgets/patient_directory_widget.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:intl/intl.dart';
+import 'package:flutter/material.dart';
 
+import '../../../../core/constants/app_colors.dart';
+import '../../../../core/utils/search_utils.dart';
+import '../../../../core/widgets/async_states.dart';
+import 'patient_history_panel.dart';
+
+/// Directorio de pacientes.
 class PatientDirectoryWidget extends StatefulWidget {
   const PatientDirectoryWidget({super.key});
 
@@ -10,249 +16,175 @@ class PatientDirectoryWidget extends StatefulWidget {
 }
 
 class _PatientDirectoryWidgetState extends State<PatientDirectoryWidget> {
-  String _searchQuery = '';
+  final _buscador = TextEditingController();
+  String _consulta = '';
 
-  void _showNewPatientDialog(BuildContext context) {
-    final repController = TextEditingController();
-    final idController = TextEditingController();
-    final emailController = TextEditingController();
-    final phoneController = TextEditingController();
-    final patientController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Nuevo Paciente'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: patientController, decoration: const InputDecoration(labelText: 'Nombre del Paciente')),
-              TextField(controller: repController, decoration: const InputDecoration(labelText: 'Nombre del Representante')),
-              TextField(controller: idController, decoration: const InputDecoration(labelText: 'Cédula del Representante')),
-              TextField(controller: emailController, decoration: const InputDecoration(labelText: 'Correo Electrónico')),
-              TextField(controller: phoneController, decoration: const InputDecoration(labelText: 'Teléfono / Celular')),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
-          ElevatedButton(
-            onPressed: () async {
-              await FirebaseFirestore.instance.collection('patients').add({
-                'patientName': patientController.text,
-                'representativeName': repController.text,
-                'idDocument': idController.text,
-                'email': emailController.text,
-                'phone': phoneController.text,
-                'createdAt': FieldValue.serverTimestamp(),
-              });
-              if (!context.mounted) return;
-              Navigator.pop(context);
-            },
-            child: const Text('Guardar'),
-          ),
-        ],
-      ),
-    );
+  @override
+  void dispose() {
+    _buscador.dispose();
+    super.dispose();
   }
 
-  void _showPatientHistory(BuildContext context, String patientId, String patientName) {
-    showModalBottomSheet(
+  Future<void> _nuevoPaciente() async {
+    final creado = await showDialog<bool>(
       context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.85,
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Historial Clínico y de Pagos: $patientName', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF4594A4))),
-            const Divider(),
-            const SizedBox(height: 16),
-            const Text('Línea de Tiempo', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            Expanded(
-              child: FutureBuilder<List<dynamic>>(
-                future: Future.wait([
-                  FirebaseFirestore.instance.collection('citas').where('patientName', isEqualTo: patientName).get(),
-                  FirebaseFirestore.instance.collection('pagos').where('patientName', isEqualTo: patientName).get(),
-                ]),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-                  if (snapshot.hasError) return const Center(child: Text('Error al cargar historial.'));
-                  
-                  final citasDocs = (snapshot.data![0] as QuerySnapshot).docs;
-                  final pagosDocs = (snapshot.data![1] as QuerySnapshot).docs;
-                  
-                  if (citasDocs.isEmpty && pagosDocs.isEmpty) {
-                    return const Center(child: Text('No hay historial de citas ni pagos para este paciente.'));
-                  }
-
-                  // Unificar todo en una lista de mapas para el timeline
-                  List<Map<String, dynamic>> timelineEvents = [];
-                  
-                  for (var doc in citasDocs) {
-                    final data = doc.data() as Map<String, dynamic>;
-                    timelineEvents.add({
-                      'type': 'cita',
-                      'date': (data['appointmentDateTime'] as Timestamp?)?.toDate() ?? DateTime.now(),
-                      'data': data,
-                    });
-                  }
-                  
-                  for (var doc in pagosDocs) {
-                    final data = doc.data() as Map<String, dynamic>;
-                    timelineEvents.add({
-                      'type': 'pago',
-                      'date': (data['date'] as Timestamp?)?.toDate() ?? DateTime.now(),
-                      'data': data,
-                    });
-                  }
-                  
-                  // Ordenar descendente (más reciente primero)
-                  timelineEvents.sort((a, b) => (b['date'] as DateTime).compareTo(a['date'] as DateTime));
-
-                  return ListView.builder(
-                    itemCount: timelineEvents.length,
-                    itemBuilder: (context, index) {
-                      final event = timelineEvents[index];
-                      final isCita = event['type'] == 'cita';
-                      final data = event['data'];
-                      final date = event['date'] as DateTime;
-                      final dateStr = DateFormat('dd/MM/yyyy hh:mm a').format(date);
-                      
-                      Color iconColor = isCita ? Colors.blue : Colors.green;
-                      IconData iconData = isCita ? Icons.medical_services : Icons.attach_money;
-                      
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 16.0),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Column(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.all(6),
-                                  decoration: BoxDecoration(color: iconColor.withValues(alpha: 0.1), shape: BoxShape.circle),
-                                  child: Icon(iconData, color: iconColor, size: 20),
-                                ),
-                                if (index != timelineEvents.length - 1)
-                                  Container(width: 2, height: 60, color: Colors.grey.shade300),
-                              ],
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Card(
-                                elevation: 0,
-                                color: Colors.grey.shade50,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  side: BorderSide(color: Colors.grey.shade200),
-                                ),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(12.0),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(dateStr, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black87)),
-                                      const SizedBox(height: 6),
-                                      if (isCita) ...[
-                                        Text('Cita Médica — Estado: ${data['status']}'),
-                                        Text('Pago Asociado: ${data['pagoEstado'] ?? 'Pendiente'}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
-                                      ] else ...[
-                                        Text('Registro de Pago — Banco: ${data['pagoBanco']}'),
-                                        Text('Monto: ${data['pagoMonto']} Bs. | Ref: ${data['pagoReferencia'] ?? 'N/A'}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
-                                        Text('Estado del pago: ${data['status']}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: data['status'] == 'approved' ? Colors.green : Colors.orange)),
-                                      ]
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
+      builder: (_) => const _NuevoPacienteDialog(),
     );
+    if (creado == true && mounted) {
+      mostrarAviso(context, 'Paciente registrado.', esExito: true);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('Directorio de Pacientes', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF4594A4))),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.add),
-                label: const Text('Nuevo Paciente'),
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4594A4), foregroundColor: Colors.white),
-                onPressed: () => _showNewPatientDialog(context),
+        Row(
+          children: [
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Directorio de Pacientes',
+                      style: TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primary)),
+                  SizedBox(height: 4),
+                  Text(
+                      'Abre el historial de un paciente para ver sus citas y lo que pidio la doctora.',
+                      style: TextStyle(
+                          fontSize: 14, color: AppColors.textSecondary)),
+                ],
               ),
-            ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: TextField(
-            decoration: InputDecoration(
-              labelText: 'Buscar paciente por nombre...',
-              prefixIcon: const Icon(Icons.search),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             ),
-            onChanged: (val) {
-              setState(() {
-                _searchQuery = val.toLowerCase();
-              });
-            },
-          ),
+            ElevatedButton.icon(
+              onPressed: _nuevoPaciente,
+              icon: const Icon(Icons.person_add_alt, size: 18),
+              label: const Text('Nuevo paciente'),
+            ),
+          ],
         ),
+        const SizedBox(height: 20),
+        TextField(
+          controller: _buscador,
+          decoration: InputDecoration(
+            labelText: 'Buscar por nombre del niño o del representante',
+            prefixIcon: const Icon(Icons.search),
+            suffixIcon: _consulta.isEmpty
+                ? null
+                : IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () {
+                      _buscador.clear();
+                      setState(() => _consulta = '');
+                    },
+                  ),
+          ),
+          onChanged: (v) => setState(() => _consulta = normalizarTexto(v)),
+        ),
+        const SizedBox(height: 18),
         Expanded(
-          child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('patients').orderBy('patientName').snapshots(),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-              if (!snapshot.hasData || snapshot.data!.docs.isEmpty) return const Center(child: Text('No hay pacientes registrados.'));
-              
-              var docs = snapshot.data!.docs;
-              if (_searchQuery.isNotEmpty) {
-                docs = docs.where((doc) {
-                  final name = ((doc.data() as Map<String, dynamic>)['patientName'] ?? '').toString().toLowerCase();
-                  return name.contains(_searchQuery);
+          child: ColeccionView<QuerySnapshot<Map<String, dynamic>>>(
+            stream:
+                FirebaseFirestore.instance.collection('patients').snapshots(),
+            estaVacio: (s) => s.docs.isEmpty,
+            vacio: const EstadoVacio(
+              icono: Icons.people_outline,
+              titulo: 'Todavia no hay pacientes',
+              detalle:
+                  'Se registran solos cuando un representante agenda su primera cita.',
+            ),
+            builder: (context, snap) {
+              var docs = snap.docs.toList();
+
+              if (_consulta.isNotEmpty) {
+                docs = docs.where((d) {
+                  final m = d.data();
+                  final nombre =
+                      normalizarTexto((m['patientName'] ?? '').toString());
+                  final rep = normalizarTexto(
+                      (m['representativeName'] ?? '').toString());
+                  final tel = (m['phone'] ?? '').toString();
+                  return nombre.contains(_consulta) ||
+                      rep.contains(_consulta) ||
+                      tel.contains(_consulta);
                 }).toList();
               }
 
-              return ListView.builder(
+              docs.sort((a, b) => (a.data()['patientName'] ?? '')
+                  .toString()
+                  .toLowerCase()
+                  .compareTo((b.data()['patientName'] ?? '')
+                      .toString()
+                      .toLowerCase()));
+
+              if (docs.isEmpty) {
+                return EstadoVacio(
+                  icono: Icons.search_off,
+                  titulo: 'Ningun paciente coincide',
+                  detalle:
+                      'Prueba con otra parte del nombre o con el telefono.',
+                  accion: OutlinedButton(
+                    onPressed: () {
+                      _buscador.clear();
+                      setState(() => _consulta = '');
+                    },
+                    child: const Text('Limpiar busqueda'),
+                  ),
+                );
+              }
+
+              return ListView.separated(
                 itemCount: docs.length,
-                itemBuilder: (context, index) {
-                  final data = docs[index].data() as Map<String, dynamic>;
-                  return Card(
-                    elevation: 1,
-                    margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (context, i) {
+                  final d = docs[i].data();
+                  final nombre = (d['patientName'] ?? 'Sin nombre').toString();
+                  final rep = (d['representativeName'] ?? '').toString();
+                  final tel = (d['phone'] ?? '').toString();
+
+                  return Container(
+                    decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.border),
+                    ),
                     child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: const Color(0xFF4594A4).withValues(alpha: 0.1),
-                        child: const Icon(Icons.person, color: Color(0xFF4594A4)),
+                      onTap: () => PatientHistoryPanel.abrir(
+                        context,
+                        patientId: docs[i].id,
+                        patientName: nombre,
+                        representativeName: rep,
+                        phone: tel,
                       ),
-                      title: Text(data['patientName'] ?? 'Sin nombre', style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text('Representante: ${data['representativeName'] ?? 'N/A'} | Cel: ${data['phone'] ?? 'N/A'}'),
-                      trailing: ElevatedButton.icon(
-                        icon: const Icon(Icons.history, size: 18),
-                        label: const Text('Historial Clínico'),
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: const Color(0xFF4594A4)),
-                        onPressed: () => _showPatientHistory(context, docs[index].id, data['patientName'] ?? ''),
+                      leading: const CircleAvatar(
+                        backgroundColor: AppColors.primarySoft,
+                        child: Icon(Icons.child_care, color: AppColors.primary),
+                      ),
+                      title: Text(nombre,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 15)),
+                      subtitle: Text(
+                        [
+                          if (rep.isNotEmpty) 'Rep.: $rep',
+                          if (tel.isNotEmpty) tel,
+                          if ((d['representativeId'] ?? '').toString().isEmpty)
+                            'Sin cuenta enlazada',
+                        ].join('  ·  '),
+                        style: const TextStyle(fontSize: 12.5),
+                      ),
+                      trailing: OutlinedButton.icon(
+                        onPressed: () => PatientHistoryPanel.abrir(
+                          context,
+                          patientId: docs[i].id,
+                          patientName: nombre,
+                          representativeName: rep,
+                          phone: tel,
+                        ),
+                        icon: const Icon(Icons.history, size: 17),
+                        label: const Text('Historial'),
                       ),
                     ),
                   );
@@ -260,6 +192,197 @@ class _PatientDirectoryWidgetState extends State<PatientDirectoryWidget> {
               );
             },
           ),
+        ),
+      ],
+    );
+  }
+}
+
+class _NuevoPacienteDialog extends StatefulWidget {
+  const _NuevoPacienteDialog();
+
+  @override
+  State<_NuevoPacienteDialog> createState() => _NuevoPacienteDialogState();
+}
+
+class _NuevoPacienteDialogState extends State<_NuevoPacienteDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _paciente = TextEditingController();
+  final _rep = TextEditingController();
+  final _cedula = TextEditingController();
+  final _correo = TextEditingController();
+  final _telefono = TextEditingController();
+  DateTime? _nacimiento;
+  bool _guardando = false;
+
+  @override
+  void dispose() {
+    for (final c in [_paciente, _rep, _cedula, _correo, _telefono]) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _guardar() async {
+    if (!_formKey.currentState!.validate()) return;
+    if (_nacimiento == null) {
+      mostrarAviso(context, 'La fecha de nacimiento es obligatoria.',
+          esError: true);
+      return;
+    }
+
+    setState(() => _guardando = true);
+    try {
+      // Si el correo corresponde a una cuenta ya registrada, se enlaza al
+      // representante. Sin ese enlace la ficha no aparece en el desplegable del
+      // padre y ademas no puede ver las recetas de su hijo.
+      String representativeId = '';
+      final correo = _correo.text.trim().toLowerCase();
+      if (correo.isNotEmpty) {
+        final usuarios = await FirebaseFirestore.instance
+            .collection('users')
+            .where('email', isEqualTo: correo)
+            .limit(1)
+            .get();
+        if (usuarios.docs.isNotEmpty) {
+          representativeId = usuarios.docs.first.data()['uid']?.toString() ??
+              usuarios.docs.first.id;
+        }
+      }
+
+      await FirebaseFirestore.instance.collection('patients').add({
+        'patientName': _paciente.text.trim(),
+        'nombreBusqueda': normalizarTexto(_paciente.text),
+        'patientBirthDate': Timestamp.fromDate(_nacimiento!),
+        'representativeId': representativeId,
+        'representativeName': _rep.text.trim(),
+        'idDocument': _cedula.text.trim(),
+        'email': correo,
+        'phone': _telefono.text.trim(),
+        'address': '',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      if (!mounted) return;
+      Navigator.pop(context, true);
+      if (representativeId.isEmpty && correo.isNotEmpty) {
+        mostrarAviso(
+          context,
+          'Guardado. Ese correo aun no tiene cuenta: cuando el representante se registre, se enlazara.',
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _guardando = false);
+      mostrarAviso(context, 'No se pudo guardar: $e', esError: true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      title: const Text('Nuevo paciente',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+      content: SizedBox(
+        width: 460,
+        child: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: _paciente,
+                  decoration: const InputDecoration(
+                      labelText: 'Nombre del niño o niña',
+                      prefixIcon: Icon(Icons.child_care)),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'Requerido' : null,
+                ),
+                const SizedBox(height: 14),
+                InkWell(
+                  onTap: () async {
+                    final d = await showDatePicker(
+                      context: context,
+                      initialDate: _nacimiento ??
+                          DateTime.now().subtract(const Duration(days: 730)),
+                      firstDate: DateTime(2005),
+                      lastDate: DateTime.now(),
+                    );
+                    if (d != null) setState(() => _nacimiento = d);
+                  },
+                  borderRadius: BorderRadius.circular(8),
+                  child: InputDecorator(
+                    decoration: InputDecoration(
+                      labelText: 'Fecha de nacimiento',
+                      prefixIcon: const Icon(Icons.cake_outlined),
+                      errorText: _nacimiento == null ? 'Requerida' : null,
+                    ),
+                    child: Text(
+                      _nacimiento == null
+                          ? 'Toca para elegir'
+                          : '${_nacimiento!.day}/${_nacimiento!.month}/${_nacimiento!.year}',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextFormField(
+                  controller: _rep,
+                  decoration: const InputDecoration(
+                      labelText: 'Nombre del representante',
+                      prefixIcon: Icon(Icons.family_restroom)),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'Requerido' : null,
+                ),
+                const SizedBox(height: 14),
+                TextFormField(
+                  controller: _telefono,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(
+                      labelText: 'Telefono',
+                      prefixIcon: Icon(Icons.phone_outlined)),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'Requerido' : null,
+                ),
+                const SizedBox(height: 14),
+                TextFormField(
+                  controller: _correo,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(
+                    labelText: 'Correo del representante',
+                    helperText:
+                        'Con el correo de su cuenta podra ver las recetas de su hijo.',
+                    prefixIcon: Icon(Icons.email_outlined),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextFormField(
+                  controller: _cedula,
+                  decoration: const InputDecoration(
+                      labelText: 'Cedula del representante',
+                      prefixIcon: Icon(Icons.badge_outlined)),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _guardando ? null : () => Navigator.pop(context),
+          child: const Text('Cancelar',
+              style: TextStyle(color: AppColors.textMuted)),
+        ),
+        ElevatedButton(
+          onPressed: _guardando ? null : _guardar,
+          child: _guardando
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white))
+              : const Text('Guardar'),
         ),
       ],
     );

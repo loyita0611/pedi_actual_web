@@ -30,9 +30,10 @@ dependencies:
   firebase_auth: ^6.5.2
   http: ^1.6.0
   shared_preferences: ^2.5.5
-  file_picker: ^12.0.0
-  firebase_storage: any
-  flutter_typeahead: any
+  file_picker: ^12.0.0        # Seleccion de PDF y de la captura del pago
+  firebase_storage: ^13.4.6   # Recetas en PDF y comprobantes de pago
+  flutter_typeahead: ^6.0.0   # Buscador de pacientes con sugerencias
+  url_launcher: ^6.3.1        # Abrir y descargar la receta en PDF
 
 dev_dependencies:
   flutter_test:

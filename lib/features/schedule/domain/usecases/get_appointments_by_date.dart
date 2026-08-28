@@ -1,12 +1,14 @@
-import 'package:pedia_actual/features/schedule/domain/entities/appointment_entity.dart';
-import 'package:pedia_actual/features/schedule/domain/repositories/appointment_repository.dart';
+// lib/features/schedule/domain/usecases/get_appointments_by_date.dart
+import '../entities/appointment_entity.dart';
+import '../repositories/appointment_repository.dart';
 
 class GetAppointmentsByDate {
+  const GetAppointmentsByDate(this.repository);
   final AppointmentRepository repository;
-  GetAppointmentsByDate(this.repository);
 
   Future<List<AppointmentEntity>> call(DateTime date) async {
-    // Aquí puedes meter lógica de negocio si fuera necesario antes de llamar al repositorio
-    return await repository.getAppointmentsByDate(date);
+    final citas = await repository.getAppointmentsByDate(date);
+    citas.sort((a, b) => a.appointmentDateTime.compareTo(b.appointmentDateTime));
+    return citas;
   }
 }

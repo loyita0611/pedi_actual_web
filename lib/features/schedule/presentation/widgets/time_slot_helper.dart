@@ -1,92 +1,101 @@
-// lib/features/schedule/presentation/utils/time_slot_helper.dart
-
+// lib/features/schedule/presentation/widgets/time_slot_helper.dart
+import '../../../../core/config/clinic_config.dart';
+import '../../../../core/constants/app_status.dart';
 import '../../domain/entities/appointment_entity.dart';
 
-class TimeSlotModel {
-  final String timeString; // Ej: "08:30 AM"
-  final DateTime dateTime;  // El objeto DateTime completo para guardar en Firebase
-  final bool isOccupied;   // Si ya está reservado
+enum MotivoBloqueo { libre, ocupado, pasado, almuerzo, fueraDeJornada }
 
-  TimeSlotModel({
+class TimeSlotModel {
+  const TimeSlotModel({
     required this.timeString,
     required this.dateTime,
-    required this.isOccupied,
+    required this.motivo,
+    this.appointment,
   });
+
+  final String timeString;
+  final DateTime dateTime;
+  final MotivoBloqueo motivo;
+
+  /// Solo se rellena para el personal de la clinica. En la vista del paciente
+  /// va en null a proposito: antes el tooltip de cada bloque ocupado mostraba
+  /// el nombre del nino que tenia la cita.
+  final AppointmentEntity? appointment;
+
+  bool get disponible => motivo == MotivoBloqueo.libre;
+  bool get isOccupied => motivo == MotivoBloqueo.ocupado;
+
+  String get etiquetaBloqueo => switch (motivo) {
+        MotivoBloqueo.libre => 'Horario disponible',
+        MotivoBloqueo.ocupado => 'Horario reservado',
+        MotivoBloqueo.pasado => 'Esta hora ya paso',
+        MotivoBloqueo.almuerzo => 'Horario de almuerzo',
+        MotivoBloqueo.fueraDeJornada => 'Fuera de la jornada',
+      };
 }
 
 class TimeSlotHelper {
-  // Genera la lista de bloques cruzándola con las citas ocupadas
+  /// Genera los bloques del dia segun la configuracion de la clinica.
+  ///
+  /// Antes el horario estaba escrito en tres sitios distintos con tres valores
+  /// distintos, no habia pausa de almuerzo, se generaban bloques los siete dias
+  /// de la semana y las horas ya vencidas seguian clicables.
   static List<TimeSlotModel> generateSlotsForDate({
     required DateTime selectedDate,
     required List<AppointmentEntity> bookedAppointments,
-    int startHour = 8,  // Jornada comienza a las 8:00 AM
-    int endHour = 16,  // Jornada termina a las 4:00 PM (16:00)
-    int intervalMinutes = 30, // Citas cada 30 min
+    ClinicConfig? config,
+    bool exponerDatosDelPaciente = false,
   }) {
-    final List<TimeSlotModel> slots = [];
-    
-    // Definimos el punto de partida: las 8:00 AM del día seleccionado
-    DateTime currentSlot = DateTime(
-      selectedDate.year,
-      selectedDate.month,
-      selectedDate.day,
-      startHour,
-      0,
-    );
+    final cfg = config ?? ClinicConfigService.actual;
+    if (!cfg.esDiaHabil(selectedDate)) return const <TimeSlotModel>[];
 
-    // Definimos la hora límite para dejar de generar bloques (Inclusivo hasta las 4:00 PM)
-    final DateTime limitTime = DateTime(
-      selectedDate.year,
-      selectedDate.month,
-      selectedDate.day,
-      endHour,
-      1, // Le sumamos un minuto para que capture el bloque de las 4:00 PM perfectamente
-    );
+    final ahora = DateTime.now();
+    final slots = <TimeSlotModel>[];
 
-    // Bucle para ir sumando los intervalos (ej: de 30 en 30 minutos)
-    while (currentSlot.isBefore(limitTime)) {
-      final String timeString = _formatToAmPm(currentSlot);
+    var actual = DateTime(selectedDate.year, selectedDate.month, selectedDate.day, cfg.horaInicio);
+    final limite = DateTime(selectedDate.year, selectedDate.month, selectedDate.day, cfg.horaFin);
 
-      // Comprobar si ya existe una cita en Firebase para este bloque exacto de hora y fecha
-      final bool occupied = bookedAppointments.any((appointment) =>
-          appointment.appointmentDateTime.year == currentSlot.year &&
-          appointment.appointmentDateTime.month == currentSlot.month &&
-          appointment.appointmentDateTime.day == currentSlot.day &&
-          appointment.appointmentDateTime.hour == currentSlot.hour &&
-          appointment.appointmentDateTime.minute == currentSlot.minute &&
-          appointment.status != 'cancelled'); // Ignoramos las canceladas
+    while (actual.isBefore(limite)) {
+      final bloque = DateTime(actual.year, actual.month, actual.day, actual.hour, actual.minute);
 
-      // 🚀 SOLUCIÓN: Creamos un objeto DateTime totalmente nuevo e independiente para cada slot
-      final DateTime frozenSlotDateTime = DateTime(
-        currentSlot.year,
-        currentSlot.month,
-        currentSlot.day,
-        currentSlot.hour,
-        currentSlot.minute,
-      );
+      AppointmentEntity? ocupante;
+      for (final cita in bookedAppointments) {
+        final c = cita.appointmentDateTime;
+        if (c.hour == bloque.hour &&
+            c.minute == bloque.minute &&
+            c.day == bloque.day &&
+            c.month == bloque.month &&
+            c.year == bloque.year &&
+            cita.status != CitaStatus.cancelada) {
+          ocupante = cita;
+          break;
+        }
+      }
+
+      final motivo = ocupante != null
+          ? MotivoBloqueo.ocupado
+          : (bloque.hour >= cfg.almuerzoInicio && bloque.hour < cfg.almuerzoFin)
+              ? MotivoBloqueo.almuerzo
+              : bloque.isBefore(ahora)
+                  ? MotivoBloqueo.pasado
+                  : MotivoBloqueo.libre;
 
       slots.add(TimeSlotModel(
-        timeString: timeString,
-        dateTime: frozenSlotDateTime, // Usamos la instancia congelada
-        isOccupied: occupied,
+        timeString: formatoAmPm(bloque),
+        dateTime: bloque,
+        motivo: motivo,
+        appointment: exponerDatosDelPaciente ? ocupante : null,
       ));
 
-      // Avanzar el reloj para el próximo bloque (sumar 30 minutos)
-      currentSlot = currentSlot.add(Duration(minutes: intervalMinutes));
+      actual = actual.add(Duration(minutes: cfg.minutosPorCita));
     }
 
     return slots;
   }
 
-  // Función auxiliar rápida para formatear a formato 12 horas (AM/PM) sin paquetes externos
-  static String _formatToAmPm(DateTime dt) {
-    final int hour = dt.hour;
-    final int minute = dt.minute;
-    final String amPm = hour >= 12 ? 'PM' : 'AM';
-    final int displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
-    final String displayMinute = minute < 10 ? '0$minute' : '$minute';
-    final String displayHourStr = displayHour < 10 ? '0$displayHour' : '$displayHour';
-    
-    return '$displayHourStr:$displayMinute $amPm';
+  static String formatoAmPm(DateTime dt) {
+    final amPm = dt.hour >= 12 ? 'PM' : 'AM';
+    final h = dt.hour > 12 ? dt.hour - 12 : (dt.hour == 0 ? 12 : dt.hour);
+    return '${h.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')} $amPm';
   }
 }

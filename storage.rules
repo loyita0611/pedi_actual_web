@@ -1,0 +1,66 @@
+rules_version = '2';
+
+// PediActual - reglas de Firebase Storage.
+// Despliegue:  firebase deploy --only storage
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function autenticado() {
+      return request.auth != null;
+    }
+
+    function rol() {
+      return autenticado() && request.auth.token.role != null
+        ? request.auth.token.role
+        : (autenticado() && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid))
+            ? firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role
+            : 'patient');
+    }
+
+    function esPersonal() {
+      return autenticado() && (rol() == 'secretary' || rol() == 'doctor');
+    }
+
+    // ------------------------------------------------------- recetas en PDF
+    // recetas/{patientId}/{archivo}.pdf
+    match /recetas/{patientId}/{archivo} {
+      // El personal siempre; el representante solo las de sus propios hijos.
+      allow read: if esPersonal() ||
+        (autenticado()
+         && firestore.exists(/databases/(default)/documents/patients/$(patientId))
+         && firestore.get(/databases/(default)/documents/patients/$(patientId)).data.representativeId == request.auth.uid);
+
+      allow write: if esPersonal()
+                   && request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType == 'application/pdf';
+
+      allow delete: if esPersonal();
+    }
+
+    // ------------------------------------------ comprobantes de pago
+    // comprobantes/{pagoId}.{jpg|png|webp|pdf}
+    // El nombre del archivo es el id del pago: de ahi sale el permiso de
+    // lectura, asi que el cliente nunca debe renombrarlo.
+    match /comprobantes/{archivo} {
+      allow read: if esPersonal() ||
+        (autenticado()
+         && firestore.exists(/databases/(default)/documents/pagos/$(archivo.split('\\.')[0]))
+         && firestore.get(/databases/(default)/documents/pagos/$(archivo.split('\\.')[0])).data.representativeId == request.auth.uid);
+
+      // El paciente sube su propio comprobante al registrar el pago.
+      // Acepta imagen o PDF: muchos bancos venezolanos entregan el recibo en
+      // PDF y antes esa subida moria con `storage/unauthorized`.
+      allow write: if autenticado()
+                   && request.resource.size < 5 * 1024 * 1024
+                   && (request.resource.contentType.matches('image/.*')
+                       || request.resource.contentType == 'application/pdf');
+
+      allow delete: if esPersonal();
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

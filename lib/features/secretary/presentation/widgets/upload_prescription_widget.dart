@@ -1,292 +1,356 @@
-import 'dart:convert';
-import 'dart:math';
-import 'package:flutter/material.dart';
+// lib/features/secretary/presentation/widgets/upload_prescription_widget.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
-import 'package:file_picker/file_picker.dart';
-import 'package:http/http.dart' as http;
+import 'package:flutter/material.dart';
 import 'package:flutter_typeahead/flutter_typeahead.dart';
+import 'package:intl/intl.dart';
 
+import '../../../../core/constants/app_colors.dart';
+import '../../../../core/services/storage_service.dart';
+import '../../../../core/utils/file_opener.dart';
+import '../../../../core/utils/search_utils.dart';
+import '../../../../core/widgets/async_states.dart';
+import '../../../../injection_container.dart' as di;
+import '../../../prescriptions/data/prescription_service.dart';
+
+/// Recetas y documentos del paciente.
+///
+/// Se elimino el PIN que protegia esta pantalla: se generaba con Random() en el
+/// navegador, se guardaba en una variable y se comparaba ahi mismo, asi que
+/// cualquiera con la consola abierta podia leerlo. Ademas viajaba a un correo
+/// escrito en el codigo, no al de la secretaria conectada. El acceso ahora lo
+/// decide el rol y lo hacen cumplir las reglas de Firestore y de Storage.
 class UploadPrescriptionWidget extends StatefulWidget {
   const UploadPrescriptionWidget({super.key});
 
   @override
-  State<UploadPrescriptionWidget> createState() => _UploadPrescriptionWidgetState();
+  State<UploadPrescriptionWidget> createState() =>
+      _UploadPrescriptionWidgetState();
 }
 
 class _UploadPrescriptionWidgetState extends State<UploadPrescriptionWidget> {
-  bool _isUnlocked = false;
-  bool _isSendingOtp = false;
-  String _generatedOtp = '';
-  final _otpController = TextEditingController();
+  final _service = di.sl<PrescriptionService>();
 
-  // Search Patient
-  final _patientSearchController = TextEditingController();
-  String? _selectedPatientId;
-  String? _selectedPatientName;
+  String? _patientId;
+  String? _patientName;
+  String? _representativeId;
+  String? _representativeName;
+  bool _subiendo = false;
 
-  bool _isUploading = false;
-
-  Future<void> _requestOtp() async {
-    setState(() => _isSendingOtp = true);
-    
-    // Generate 6 digit PIN
-    _generatedOtp = (Random().nextInt(900000) + 100000).toString();
-    
-    try {
-      final urlCorreo = Uri.parse('https://api.emailjs.com/api/v1.0/email/send');
-      await http.post(
-        urlCorreo,
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          'service_id': 'service_vfquxn8',  
-          'template_id': 'template_brfi9f5', // Usamos el template existente
-          'user_id': 'wC6RQuuJG9ZfdQxp9',
-          'template_params': {
-            'to_email': 'secretaria.pediaactual@gmail.com', // Correo destino de prueba o de admin
-            'patient_name': 'Secretaría (OTP: $_generatedOtp)',
-            'appointment_date': 'Autorización de Recetas',
-            'appointment_time': 'Requerida',
-            'doctor_phone': 'No comparta este PIN: $_generatedOtp',
-          }
-        }),
-      ).timeout(const Duration(seconds: 10));
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('PIN enviado al correo administrativo.')));
-      }
-    } catch (e) {
-      debugPrint("Error EmailJS: $e");
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Error al enviar PIN.')));
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isSendingOtp = false);
-      }
+  Future<List<Map<String, dynamic>>> _buscar(String consulta) async {
+    final q = normalizarTexto(consulta);
+    if (q.isEmpty) {
+      return const [];
     }
-  }
 
-  void _verifyOtp() {
-    if (_otpController.text.trim() == _generatedOtp && _generatedOtp.isNotEmpty) {
-      setState(() => _isUnlocked = true);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('PIN Incorrecto')));
-    }
-  }
-
-  Future<List<Map<String, dynamic>>> _getPatientSuggestions(String query) async {
-    if (query.isEmpty) return [];
-    final snapshot = await FirebaseFirestore.instance
+    // Se busca contra `nombreBusqueda`, en minusculas y sin tildes, porque las
+    // consultas de rango de Firestore distinguen mayusculas: escribir "juan"
+    // no encontraba a "Juan".
+    final snap = await FirebaseFirestore.instance
         .collection('patients')
-        .where('patientName', isGreaterThanOrEqualTo: query)
-        .where('patientName', isLessThanOrEqualTo: '$query\uf8ff')
+        .where('nombreBusqueda', isGreaterThanOrEqualTo: q)
+        .where('nombreBusqueda', isLessThanOrEqualTo: cotaSuperior(q))
+        .limit(12)
         .get();
-    return snapshot.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
+
+    if (snap.docs.isNotEmpty) {
+      return snap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+    }
+
+    // Respaldo para las fichas creadas antes de que existiera ese campo.
+    final legado = await FirebaseFirestore.instance
+        .collection('patients')
+        .orderBy('patientName')
+        .limit(200)
+        .get();
+    return legado.docs
+        .where((d) =>
+            normalizarTexto((d.data()['patientName'] ?? '').toString())
+                .contains(q))
+        .take(12)
+        .map((d) => {'id': d.id, ...d.data()})
+        .toList();
   }
 
-  Future<void> _pickAndUploadFile() async {
-    if (_selectedPatientId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Seleccione un paciente primero')));
+  Future<void> _subirPdf() async {
+    if (_patientId == null) {
+      mostrarAviso(context, 'Primero busca y selecciona un paciente.',
+          esError: true);
       return;
     }
 
-    final result = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['pdf', 'jpg', 'png', 'jpeg'],
-    );
-
-    if (result.isNotEmpty) {
-      final platformFile = result.first;
-      final fileName = platformFile.name;
-
-      setState(() => _isUploading = true);
-      try {
-        // Use readAsBytes() — the v12 replacement for the deprecated .bytes + withData
-        final fileBytes = await platformFile.readAsBytes();
-
-        final storageRef = FirebaseStorage.instance.ref()
-            .child('prescriptions/$_selectedPatientId/${DateTime.now().millisecondsSinceEpoch}_$fileName');
-
-        final uploadTask = storageRef.putData(fileBytes);
-        final snap = await uploadTask;
-        final downloadUrl = await snap.ref.getDownloadURL();
-
-        await FirebaseFirestore.instance.collection('prescriptions').add({
-          'patientId': _selectedPatientId,
-          'patientName': _selectedPatientName,
-          'fileName': fileName,
-          'fileUrl': downloadUrl,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Documento subido con éxito')));
-        }
-      } catch (e) {
-        debugPrint('Error uploading file: $e');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Error al subir documento')));
-        }
-      } finally {
-        if (mounted) {
-          setState(() => _isUploading = false);
-        }
-      }
-    }
-  }
-  
-  Future<void> _deletePrescription(String docId, String fileUrl) async {
+    setState(() => _subiendo = true);
     try {
-      await FirebaseStorage.instance.refFromURL(fileUrl).delete();
-      await FirebaseFirestore.instance.collection('prescriptions').doc(docId).delete();
+      // Selector restringido a PDF, con doble verificacion de la extension.
+      final archivo = await StorageService.elegirPdf();
+      if (archivo == null) {
+        return;
+      }
+
+      await _service.subir(
+        patientId: _patientId!,
+        patientName: _patientName ?? '',
+        representativeId: _representativeId ?? '',
+        archivo: archivo,
+      );
+
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Documento eliminado')));
+        mostrarAviso(
+            context, 'Receta enviada. El representante ya puede descargarla.',
+            esExito: true);
+      }
+    } on ArchivoDemasiadoGrande catch (e) {
+      if (mounted) {
+        mostrarAviso(context, e.toString(), esError: true);
+      }
+    } on ArchivoVacio catch (e) {
+      if (mounted) {
+        mostrarAviso(context, e.toString(), esError: true);
+      }
+    } on SubidaFallida catch (e) {
+      // Ya viene traducida a algo legible: no se le antepone nada.
+      if (mounted) {
+        mostrarAviso(context, e.mensaje, esError: true);
+      }
+    } on FormatException catch (e) {
+      if (mounted) {
+        mostrarAviso(context, e.message, esError: true);
       }
     } catch (e) {
-      debugPrint('Error deleting file: $e');
+      if (mounted) {
+        mostrarAviso(context, 'No se pudo subir el documento: $e',
+            esError: true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _subiendo = false);
+      }
     }
   }
 
-  Widget _buildLockedScreen() {
-    return Center(
-      child: Card(
-        elevation: 4,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Padding(
-          padding: const EdgeInsets.all(32.0),
-          child: SizedBox(
-            width: 400,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.security, size: 80, color: Color(0xFF4594A4)),
-                const SizedBox(height: 24),
-                const Text('Área Segura de Recetas y Documentos', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
-                const SizedBox(height: 16),
-                const Text('Para acceder a esta sección, requiere validación por PIN de 6 dígitos que será enviado al correo administrativo.', textAlign: TextAlign.center),
-                const SizedBox(height: 24),
-                if (_generatedOtp.isEmpty)
-                  ElevatedButton.icon(
-                    icon: _isSendingOtp ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Icon(Icons.email),
-                    label: Text(_isSendingOtp ? 'Enviando...' : 'Solicitar PIN'),
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4594A4), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12)),
-                    onPressed: _isSendingOtp ? null : _requestOtp,
-                  )
-                else ...[
-                  TextField(
-                    controller: _otpController,
-                    keyboardType: TextInputType.number,
-                    maxLength: 6,
-                    decoration: const InputDecoration(
-                      labelText: 'Ingrese el PIN recibido',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.lock),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: _verifyOtp,
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4594A4), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12)),
-                    child: const Text('Verificar y Desbloquear'),
-                  ),
-                ],
-              ],
-            ),
+  Future<void> _eliminar(Prescription receta) async {
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: const Text('Eliminar documento', style: TextStyle(fontSize: 17)),
+        content: Text('Se borrara "${receta.fileName}" de forma permanente. '
+            'El representante dejara de verlo.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar',
+                style: TextStyle(color: AppColors.textMuted)),
           ),
-        ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Eliminar'),
+          ),
+        ],
       ),
     );
-  }
+    if (confirmado != true) {
+      return;
+    }
 
-  Widget _buildUnlockedScreen() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('Gestión de Recetas y Documentos', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF4594A4))),
-        const SizedBox(height: 8),
-        const Text('Busque un paciente para visualizar y subir sus récipes o estudios médicos.'),
-        const SizedBox(height: 24),
-        TypeAheadField<Map<String, dynamic>>(
-          suggestionsCallback: (pattern) => _getPatientSuggestions(pattern),
-          builder: (context, controller, focusNode) {
-            return TextField(
-              controller: controller,
-              focusNode: focusNode,
-              decoration: InputDecoration(
-                labelText: 'Buscar Paciente',
-                prefixIcon: const Icon(Icons.search),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-            );
-          },
-          itemBuilder: (context, suggestion) {
-            return ListTile(title: Text(suggestion['patientName'] ?? ''), subtitle: Text('Rep: ${suggestion['representativeName'] ?? ''}'));
-          },
-          onSelected: (suggestion) {
-            setState(() {
-              _selectedPatientId = suggestion['id'];
-              _selectedPatientName = suggestion['patientName'];
-              _patientSearchController.text = _selectedPatientName ?? '';
-            });
-          },
-        ),
-        const SizedBox(height: 24),
-        if (_selectedPatientId != null) ...[
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Archivos de $_selectedPatientName', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              ElevatedButton.icon(
-                icon: _isUploading ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Icon(Icons.upload_file),
-                label: Text(_isUploading ? 'Subiendo...' : 'Subir Documento'),
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4594A4), foregroundColor: Colors.white),
-                onPressed: _isUploading ? null : _pickAndUploadFile,
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance.collection('prescriptions').where('patientId', isEqualTo: _selectedPatientId).orderBy('createdAt', descending: true).snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) return const Center(child: Text('No hay documentos subidos para este paciente.'));
-                
-                final docs = snapshot.data!.docs;
-                return ListView.builder(
-                  itemCount: docs.length,
-                  itemBuilder: (context, index) {
-                    final data = docs[index].data() as Map<String, dynamic>;
-                    return Card(
-                      child: ListTile(
-                        leading: const Icon(Icons.picture_as_pdf, color: Colors.redAccent),
-                        title: Text(data['fileName'] ?? 'Documento'),
-                        subtitle: Text(data['createdAt'] != null ? (data['createdAt'] as Timestamp).toDate().toString().substring(0, 16) : ''),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.delete, color: Colors.red),
-                              onPressed: () => _deletePrescription(docs[index].id, data['fileUrl']),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
-          )
-        ] else
-          const Expanded(child: Center(child: Text('Busque y seleccione un paciente para ver sus documentos', style: TextStyle(color: Colors.grey, fontSize: 16)))),
-      ],
-    );
+    try {
+      await _service.eliminar(receta);
+      if (mounted) {
+        mostrarAviso(context, 'Documento eliminado.');
+      }
+    } catch (e) {
+      if (mounted) {
+        mostrarAviso(context, 'No se pudo eliminar: $e', esError: true);
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return _isUnlocked ? _buildUnlockedScreen() : _buildLockedScreen();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Recetas y Documentos',
+          style: TextStyle(
+              fontSize: 26,
+              fontWeight: FontWeight.bold,
+              color: AppColors.primary),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Busca un paciente y adjunta su receta en PDF. Al subirla, el representante la ve al instante en su panel.',
+          style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
+        ),
+        const SizedBox(height: 22),
+        TypeAheadField<Map<String, dynamic>>(
+          suggestionsCallback: _buscar,
+          emptyBuilder: (_) => const Padding(
+            padding: EdgeInsets.all(16),
+            child: Text('Ningun paciente coincide.',
+                style: TextStyle(color: AppColors.textMuted)),
+          ),
+          builder: (context, controller, focusNode) => TextField(
+            controller: controller,
+            focusNode: focusNode,
+            decoration: InputDecoration(
+              labelText: 'Buscar paciente',
+              hintText: 'Escribe el nombre del niño o niña',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _patientId == null
+                  ? null
+                  : IconButton(
+                      tooltip: 'Limpiar',
+                      icon: const Icon(Icons.close, size: 18),
+                      onPressed: () {
+                        controller.clear();
+                        setState(() {
+                          _patientId = null;
+                          _patientName = null;
+                          _representativeId = null;
+                          _representativeName = null;
+                        });
+                      },
+                    ),
+            ),
+          ),
+          itemBuilder: (context, s) => ListTile(
+            leading: const CircleAvatar(
+              backgroundColor: AppColors.primarySoft,
+              child: Icon(Icons.child_care, color: AppColors.primary, size: 20),
+            ),
+            title: Text(s['patientName']?.toString() ?? ''),
+            subtitle: Text(
+                'Rep.: ${s['representativeName'] ?? '-'}  ·  ${s['phone'] ?? 'sin telefono'}'),
+          ),
+          onSelected: (s) => setState(() {
+            _patientId = s['id']?.toString();
+            _patientName = s['patientName']?.toString();
+            _representativeId = s['representativeId']?.toString();
+            _representativeName = s['representativeName']?.toString();
+          }),
+        ),
+        const SizedBox(height: 24),
+        Expanded(child: _panelPaciente()),
+      ],
+    );
+  }
+
+  Widget _panelPaciente() {
+    if (_patientId == null) {
+      return const EstadoVacio(
+        icono: Icons.folder_shared_outlined,
+        titulo: 'Selecciona un paciente',
+        detalle: 'Sus recetas y estudios apareceran aqui.',
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _patientName ?? '',
+                    style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimary),
+                  ),
+                  if ((_representativeName ?? '').isNotEmpty)
+                    Text('Representante: $_representativeName',
+                        style: const TextStyle(
+                            fontSize: 12.5, color: AppColors.textMuted)),
+                  if ((_representativeId ?? '').isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4),
+                      child: Text(
+                        'Esta ficha no tiene representante enlazado: el archivo se subira, '
+                        'pero el padre no podra verlo hasta que se le asocie una cuenta.',
+                        style:
+                            TextStyle(fontSize: 12, color: AppColors.warning),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            ElevatedButton.icon(
+              onPressed: _subiendo ? null : _subirPdf,
+              icon: _subiendo
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.picture_as_pdf, size: 18),
+              label: Text(_subiendo ? 'Subiendo...' : 'Adjuntar receta (PDF)'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Expanded(
+          child: ColeccionView<List<Prescription>>(
+            stream: _service.observarDePaciente(_patientId!),
+            estaVacio: (l) => l.isEmpty,
+            vacio: const EstadoVacio(
+              icono: Icons.description_outlined,
+              titulo: 'Sin documentos todavia',
+              detalle: 'Adjunta la primera receta con el boton de arriba.',
+            ),
+            builder: (context, recetas) => ListView.separated(
+              itemCount: recetas.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (context, i) {
+                final r = recetas[i];
+                return Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: ListTile(
+                    leading: const Icon(Icons.picture_as_pdf,
+                        color: AppColors.danger, size: 28),
+                    title: Text(r.fileName,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w600, fontSize: 14)),
+                    subtitle: Text(
+                      [
+                        if (r.createdAt != null)
+                          DateFormat("d 'de' MMMM 'de' y, h:mm a", 'es')
+                              .format(r.createdAt!),
+                        if (r.sizeBytes > 0) r.tamanoLegible,
+                      ].join('  ·  '),
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          tooltip: 'Abrir',
+                          icon: const Icon(Icons.open_in_new,
+                              size: 19, color: AppColors.primary),
+                          onPressed: () => abrirArchivo(context, r.fileUrl),
+                        ),
+                        IconButton(
+                          tooltip: 'Eliminar',
+                          icon: const Icon(Icons.delete_outline,
+                              size: 19, color: AppColors.danger),
+                          onPressed: () => _eliminar(r),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }

@@ -1,418 +1,909 @@
 // lib/features/schedule/presentation/widgets/booking_dialog.dart
-import 'package:flutter/material.dart';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+
+import '../../../../core/config/clinic_config.dart';
+import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_status.dart';
+import '../../../../core/constants/venezuela_banks.dart';
+import '../../../../core/services/bcv_service.dart';
+import '../../../../core/services/storage_service.dart';
+import '../../../../core/widgets/async_states.dart';
+import '../../../../injection_container.dart' as di;
 import '../../domain/entities/appointment_entity.dart';
 
-class BookingDialog extends StatefulWidget {
-  final AppointmentEntity? appointment; 
-  final String timeString;
-  final DateTime appointmentDateTime;
-  final Function(AppointmentEntity) onConfirmBooking;
+/// Reserva que no llego a guardarse, con el motivo ya listo para mostrar.
+///
+/// La lanza quien implementa [BookingDialog.onConfirmBooking] cuando sabe por
+/// que fallo: asi el dialogo escribe la causa real en pantalla en vez de un
+/// "no se pudo" generico.
+class ReservaFallida implements Exception {
+  const ReservaFallida(this.mensaje);
+  final String mensaje;
+  @override
+  String toString() => mensaje;
+}
 
+/// Formulario de reserva del representante, en tres pasos.
+class BookingDialog extends StatefulWidget {
   const BookingDialog({
     super.key,
-    this.appointment, 
+    this.appointment,
     required this.timeString,
     required this.appointmentDateTime,
     required this.onConfirmBooking,
   });
+
+  final AppointmentEntity? appointment;
+  final String timeString;
+  final DateTime appointmentDateTime;
+
+  /// Debe devolver true si la cita quedo guardada de verdad.
+  final Future<bool> Function(AppointmentEntity) onConfirmBooking;
 
   @override
   State<BookingDialog> createState() => _BookingDialogState();
 }
 
 class _BookingDialogState extends State<BookingDialog> {
-  int _currentStep = 1; 
-  final _formKey = GlobalKey<FormState>();
-  final _paymentFormKey = GlobalKey<FormState>();
-  bool _isSaving = false; 
+  final _formPaciente = GlobalKey<FormState>();
+  final _formPago = GlobalKey<FormState>();
 
-  late DateTime _currentDateTime; 
-  late String _currentTimeString;
+  final _representante = TextEditingController();
+  final _telefono = TextEditingController();
+  final _correo = TextEditingController();
+  final _paciente = TextEditingController();
+  final _direccion = TextEditingController();
+  final _motivo = TextEditingController();
 
-  final _patientNameController = TextEditingController();
-  final _addressController = TextEditingController();
-  final _representativeNameController = TextEditingController();
-  final _emailController = TextEditingController();
-  final _phoneController = TextEditingController(); // 🚀 AQUÍ VA EL CONTROLADOR DEL TELÉFONO
-  final _reasonController = TextEditingController(); 
-  
-  String? _selectedOriginBank; 
-  final _senderIdController = TextEditingController(); 
-  final _pagoTelefonoController = TextEditingController(); 
-  final _amountPaidController = TextEditingController(); 
-  final _referenceController = TextEditingController();   
+  final _referencia = TextEditingController();
+  final _cedulaPago = TextEditingController();
+  final _telefonoPago = TextEditingController();
+  final _monto = TextEditingController();
 
-  DateTime? _selectedBirthDate;
-  String _selectedPaymentMethod = 'Pago Móvil';
-  
-  double _tasaBCV = 0.0;
-  bool _isLoadingTasa = true;
-  final double _montoUSD = 40.0;
+  int _paso = 1;
+  bool _guardando = false;
 
-  String? _selectedPatientId;
-  bool _isCreatingNewPatient = false;
-  final String? userId = FirebaseAuth.instance.currentUser?.uid;
+  String? _patientId;
+  bool _pacienteNuevo = false;
+  DateTime? _nacimiento;
 
-  final List<String> _bancosVenezuela = [
-    'Banco de Venezuela',
-    'Banesco',
-    'Mercantil',
-    'Provincial',
-    'BNC',
-    'Bancamiga',
-    'Banplus',
-    'Banco Nacional de Crédito',
-    'BFC Banco Fondo Común',
-  ];
+  String? _banco;
+  MetodoPago _metodo = MetodoPago.pagoMovil;
+
+  TasaBcv? _tasa;
+  bool _cargandoTasa = true;
+  Object? _errorTasa;
+
+  // Comprobante de pago
+  PlatformFile? _comprobante;
+  String? _comprobanteUrl;
+
+  /// Nombre visible del adjunto. Sobrevive a la subida: cuando el archivo ya
+  /// esta en Storage `_comprobante` se pone en null y sin esto la tarjeta
+  /// volvia a decir "Ya cargada anteriormente".
+  String? _comprobanteNombre;
+
+  /// Motivo del ultimo intento fallido. Se pinta dentro del dialogo porque el
+  /// SnackBar de `mostrarAviso` sale por detras de la barrera modal y el
+  /// representante nunca llega a leerlo.
+  String? _errorEnvio;
+
+  /// Texto y avance del indicador mientras se guarda.
+  String _fase = '';
+  double? _progreso;
+
+  /// Tope de la reserva completa. Es el ultimo cinturon de seguridad: si el
+  /// callback que guarda en Firestore no responde, el dialogo se destraba
+  /// igual. Firestore no lanza error cuando no hay red, se queda esperando.
+  static const Duration _limiteGuardado = Duration(seconds: 60);
+
+  /// Se reserva el id del pago desde el principio para que la captura se suba a
+  /// `comprobantes/{pagoId}.jpg` y las reglas de Storage puedan comprobar,
+  /// por el nombre del archivo, que quien lo lee es su dueno.
+  late final String _pagoId =
+      FirebaseFirestore.instance.collection('pagos').doc().id;
+
+  final String? _uid = FirebaseAuth.instance.currentUser?.uid;
+  ClinicConfig get _config => ClinicConfigService.actual;
 
   @override
   void initState() {
     super.initState();
-    _fetchBCVTasa();
+    _cargarTasa();
 
-    _currentDateTime = widget.appointmentDateTime;
-    _currentTimeString = widget.timeString;
-
-    final currentUser = FirebaseAuth.instance.currentUser;
-    if (currentUser != null) {
-      if (currentUser.displayName != null && currentUser.displayName!.isNotEmpty) {
-        _representativeNameController.text = currentUser.displayName!;
+    final usuario = FirebaseAuth.instance.currentUser;
+    if (usuario != null) {
+      if ((usuario.displayName ?? '').isNotEmpty) {
+        _representante.text = usuario.displayName!;
       }
-      if (currentUser.email != null && currentUser.email!.isNotEmpty) {
-        _emailController.text = currentUser.email!;
+      if ((usuario.email ?? '').isNotEmpty) {
+        _correo.text = usuario.email!;
       }
     }
 
-    if (widget.appointment != null && widget.appointment!.id.isNotEmpty) {
-      _patientNameController.text = widget.appointment!.patientName;
-      _addressController.text = widget.appointment!.address;
-      _representativeNameController.text = widget.appointment!.representativeName;
-      _emailController.text = widget.appointment!.email;
-      _phoneController.text = widget.appointment!.phone; // 🚀 CARGAMOS EL TELÉFONO SI ES EDICIÓN
-      _selectedBirthDate = widget.appointment!.patientBirthDate;
-      _currentDateTime = widget.appointment!.appointmentDateTime;
-
-      _referenceController.text = widget.appointment!.pagoReferencia ?? '';
-      _selectedOriginBank = widget.appointment!.pagoBanco;
-      _senderIdController.text = widget.appointment!.pagoCedula ?? '';      
-      _pagoTelefonoController.text = widget.appointment!.pagoTelefono ?? '';  
-      if (widget.appointment!.pagoMonto != null) {
-        _amountPaidController.text = widget.appointment!.pagoMonto.toString();
+    final cita = widget.appointment;
+    if (cita != null && cita.id.isNotEmpty) {
+      _patientId = cita.patientId.isEmpty ? null : cita.patientId;
+      _paciente.text = cita.patientName;
+      _direccion.text = cita.address;
+      _representante.text = cita.representativeName;
+      _correo.text = cita.email;
+      _telefono.text = cita.phone;
+      _motivo.text = cita.motivo;
+      _nacimiento = cita.patientBirthDate;
+      _referencia.text = cita.pagoReferencia ?? '';
+      _banco = normalizarBanco(cita.pagoBanco);
+      _cedulaPago.text = cita.pagoCedula ?? '';
+      _telefonoPago.text = cita.pagoTelefono ?? '';
+      _comprobanteUrl = cita.pagoComprobanteUrl;
+      if (cita.pagoMonto != null) {
+        _monto.text = cita.pagoMonto!.toStringAsFixed(2);
       }
-    }
-  }
-
-  Future<void> _fetchBCVTasa() async {
-    try {
-      final response = await http.get(Uri.parse('https://ve.dolarapi.com/v1/dolares/oficial')).timeout(const Duration(seconds: 5));
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        setState(() {
-          _tasaBCV = (data['promedio'] as num).toDouble();
-          _isLoadingTasa = false;
-        });
-      }
-    } catch (e) {
-      debugPrint("Error consultando DolarApi: $e");
-      setState(() => _isLoadingTasa = false);
+      _metodo = MetodoPago.fromRaw(cita.pagoMetodo);
     }
   }
 
   @override
   void dispose() {
-    _patientNameController.dispose();
-    _addressController.dispose();
-    _representativeNameController.dispose();
-    _emailController.dispose();
-    _phoneController.dispose(); // 🚀 NO OLVIDAR DESHACERSE DEL CONTROLADOR
-    _reasonController.dispose(); 
-    _senderIdController.dispose();
-    _pagoTelefonoController.dispose(); 
-    _amountPaidController.dispose();
-    _referenceController.dispose();
+    for (final c in [
+      _representante,
+      _telefono,
+      _correo,
+      _paciente,
+      _direccion,
+      _motivo,
+      _referencia,
+      _cedulaPago,
+      _telefonoPago,
+      _monto,
+    ]) {
+      c.dispose();
+    }
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    String titleText = widget.appointment != null && widget.appointment!.id.isNotEmpty 
-        ? 'Modificar Cita' 
-        : 'Agendar Cita Pediátrica';
-    IconData headerIcon = Icons.assignment_outlined;
+  Future<void> _cargarTasa() async {
+    setState(() {
+      _cargandoTasa = true;
+      _errorTasa = null;
+    });
+    try {
+      final tasa = await di.sl<BcvService>().obtener();
+      if (mounted) {
+        setState(() => _tasa = tasa);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _errorTasa = e);
+      }
+    } finally {
+      // El indicador se apaga pase lo que pase: antes esto vivia dentro del
+      // `if (statusCode == 200)` y cualquier otra respuesta dejaba el spinner
+      // girando para siempre.
+      if (mounted) {
+        setState(() => _cargandoTasa = false);
+      }
+    }
+  }
 
-    if (_currentStep == 2) {
-      titleText = 'Pasarela de Pago - Total: \$$_montoUSD';
-      headerIcon = Icons.payment;
-    } else if (_currentStep == 3) {
-      titleText = 'Registrar Pago';
-      headerIcon = Icons.account_balance_wallet_outlined;
+  double get _totalBs => (_tasa?.valor ?? 0) * _config.tarifaUsd;
+
+  // --------------------------------------------------------------- acciones
+
+  Future<void> _elegirComprobante() async {
+    try {
+      final archivo = await StorageService.elegirComprobante();
+      if (archivo == null) {
+        return;
+      }
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _comprobante = archivo;
+        _comprobanteNombre = archivo.name;
+        // Se descarta la URL anterior: si el usuario cambia el archivo, la
+        // cita no puede quedarse apuntando al comprobante viejo.
+        _comprobanteUrl = null;
+        _errorEnvio = null;
+      });
+    } on FormatException catch (e) {
+      if (mounted) {
+        mostrarAviso(context, e.message, esError: true);
+      }
+    } catch (e) {
+      if (mounted) {
+        mostrarAviso(context, 'No se pudo abrir el archivo: $e', esError: true);
+      }
+    }
+  }
+
+  Future<void> _avanzar() async {
+    if (_paso == 1) {
+      if (!_pacienteNuevo && _patientId == null) {
+        mostrarAviso(context, 'Selecciona un hijo o agrega uno nuevo.',
+            esError: true);
+        return;
+      }
+      // La fecha de nacimiento ahora se valida siempre, no solo al crear un
+      // paciente: antes, si el nino lo habia cargado la secretaria sin fecha,
+      // este boton no hacia nada y no aparecia ningun mensaje.
+      if (!_formPaciente.currentState!.validate()) {
+        return;
+      }
+      if (_nacimiento == null) {
+        mostrarAviso(
+          context,
+          'Falta la fecha de nacimiento del paciente. Agregala para continuar.',
+          esError: true,
+        );
+        setState(() => _pacienteNuevo = true);
+        return;
+      }
+      setState(() {
+        _paso = 2;
+        _errorEnvio = null;
+      });
+      return;
     }
 
-    return AlertDialog(
-      title: Row(
-        children: [
-          Icon(headerIcon, color: Colors.teal),
-          const SizedBox(width: 8),
-          Expanded(child: Text(titleText, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
-        ],
-      ),
-      content: SizedBox(
-        width: 500,
-        child: _isSaving 
-            ? const SizedBox(
-                height: 200,
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      CircularProgressIndicator(color: Colors.teal),
-                      SizedBox(height: 16),
-                      Text("Procesando cita y verificando pago...", style: TextStyle(color: Colors.teal, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                ),
-              )
-            : SingleChildScrollView(child: _buildCurrentStepContent()),
-      ),
-      actions: _isSaving ? [] : [
-        TextButton(
-          onPressed: () {
-            if (_currentStep > 1) {
-              setState(() { _currentStep--; });
-            } else {
-              Navigator.pop(context);
+    if (_paso == 2) {
+      if (_tasa == null) {
+        mostrarAviso(
+            context, 'Necesitamos la tasa del dia para calcular el total.',
+            esError: true);
+        return;
+      }
+      if (_monto.text.trim().isEmpty) {
+        _monto.text = _totalBs.toStringAsFixed(2);
+      }
+      setState(() {
+        _paso = 3;
+        _errorEnvio = null;
+      });
+      return;
+    }
+
+    await _confirmar();
+  }
+
+  /// Sube el comprobante y guarda la cita.
+  ///
+  /// Invariante de este metodo: pase lo que pase (red caida, CORS, reglas de
+  /// Storage, Firestore que no contesta o cualquier excepcion inesperada) el
+  /// indicador de carga se apaga y el motivo queda escrito en pantalla.
+  ///
+  /// Lo que congelaba el dialogo no eran los errores sino los `await` que no
+  /// terminaban nunca: un `catch` solo corre cuando algo falla, y una promesa
+  /// de Firebase que se queda esperando no falla jamas. Por eso cada espera
+  /// lleva su propio `timeout` y el apagado del spinner vive en un `finally`.
+  Future<void> _confirmar() async {
+    // Doble clic o Enter repetido: sin esto se subia el comprobante dos veces
+    // y podian entrar dos reservas del mismo horario.
+    if (_guardando) {
+      return;
+    }
+
+    final formulario = _formPago.currentState;
+    if (formulario == null || !formulario.validate()) {
+      return;
+    }
+
+    if (_comprobante == null && (_comprobanteUrl ?? '').isEmpty) {
+      mostrarAviso(context, 'Adjunta el comprobante del pago para continuar.',
+          esError: true);
+      return;
+    }
+
+    // Se valida aqui y no dentro del `try`: el `_nacimiento!` de mas abajo
+    // reventaba con un error tecnico en vez de devolver al paso que falta.
+    if (_nacimiento == null) {
+      setState(() {
+        _paso = 1;
+        _pacienteNuevo = true;
+      });
+      mostrarAviso(
+        context,
+        'Falta la fecha de nacimiento del paciente. Agregala para continuar.',
+        esError: true,
+      );
+      return;
+    }
+
+    setState(() {
+      _guardando = true;
+      _errorEnvio = null;
+      _progreso = null;
+      _fase = 'Subiendo el comprobante...';
+    });
+
+    var cerrado = false;
+    try {
+      // 1. Primero la captura, para que la cita nazca ya con su comprobante.
+      final urlComprobante = await _asegurarComprobante();
+
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _fase = 'Guardando tu cita...';
+        _progreso = null;
+      });
+
+      // 2. Se espera la confirmacion real antes de cerrar. Antes el dialogo se
+      //    cerraba y el correo salia sin saber si Firestore habia guardado:
+      //    el paciente podia recibir la confirmacion de una cita inexistente.
+      final guardada = await widget
+          .onConfirmBooking(_armarCita(urlComprobante))
+          .timeout(_limiteGuardado);
+
+      if (!mounted) {
+        return;
+      }
+      if (guardada) {
+        cerrado = true;
+        Navigator.pop(context);
+      } else {
+        _fallo(
+          'No se pudo guardar la cita. Revisa los datos e intenta de nuevo.',
+        );
+      }
+    } on TimeoutException {
+      _fallo(
+        'El servidor no respondio a tiempo. Revisa tu conexion y confirma en '
+        '"Mis citas" si la reserva quedo hecha antes de volver a intentarlo.',
+      );
+    } on ReservaFallida catch (e) {
+      _fallo(e.mensaje);
+    } on ArchivoDemasiadoGrande catch (e) {
+      _fallo(e.toString());
+    } on ArchivoVacio catch (e) {
+      _fallo(e.toString());
+    } on SubidaFallida catch (e) {
+      _fallo(e.mensaje);
+    } on FormatException catch (e) {
+      _fallo(e.message);
+    } on FirebaseException catch (e) {
+      _fallo('${e.message ?? 'Firebase rechazo la operacion'} (${e.code})');
+    } catch (e) {
+      _fallo('No se pudo completar la reserva: $e');
+    } finally {
+      // Red de seguridad: si el dialogo sigue en pie, el spinner se apaga
+      // aunque el error haya llegado por un camino que nadie previo.
+      if (!cerrado && mounted) {
+        setState(() {
+          _guardando = false;
+          _progreso = null;
+          _fase = '';
+        });
+      }
+    }
+  }
+
+  /// Sube la captura si hace falta y devuelve la URL que va a la cita.
+  ///
+  /// La URL se guarda en `_comprobanteUrl` en cuanto se obtiene: si despues
+  /// falla Firestore, el reintento reutiliza el archivo ya subido en vez de
+  /// dejar una copia huerfana en el bucket por cada intento.
+  Future<String?> _asegurarComprobante() async {
+    final archivo = _comprobante;
+    if (archivo == null) {
+      return _comprobanteUrl;
+    }
+
+    final subido = await di.sl<StorageService>().subirComprobante(
+          id: _pagoId,
+          archivo: archivo,
+          onProgreso: (avance) {
+            if (mounted) {
+              setState(() => _progreso = avance);
             }
           },
-          child: Text(_currentStep == 1 ? 'Cancelar' : 'Atrás', style: const TextStyle(color: Colors.grey)),
-        ),
-        ElevatedButton(
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
-          onPressed: _handleNavigationAndSubmit,
-          child: Text(_currentStep == 1 ? 'Continuar al Pago' : _currentStep == 2 ? 'Ya pagué' : 'Confirmar Cita'),
-        ),
-      ],
+        );
+
+    _comprobante = null;
+    _comprobanteUrl = subido.url;
+    _comprobanteNombre = subido.nombre;
+    if (mounted) {
+      setState(() {});
+    }
+    return subido.url;
+  }
+
+  AppointmentEntity _armarCita(String? urlComprobante) {
+    return AppointmentEntity(
+      id: widget.appointment?.id ?? '',
+      patientId: _patientId ?? '',
+      representativeId: _uid ?? '',
+      patientName: _paciente.text.trim(),
+      patientBirthDate: _nacimiento!,
+      address: _direccion.text.trim(),
+      representativeName: _representante.text.trim(),
+      email: _correo.text.trim(),
+      phone: _telefono.text.trim(),
+      appointmentDateTime: widget.appointmentDateTime,
+      status: CitaStatus.pendiente,
+      // El motivo se pedia y se descartaba: nunca llegaba a Firestore.
+      motivo: _motivo.text.trim(),
+      pagoId: _pagoId,
+      pagoReferencia: _referencia.text.trim(),
+      pagoMonto: double.tryParse(_monto.text.trim().replaceAll(',', '.')) ?? 0,
+      pagoMontoEsperado: _totalBs,
+      pagoTasaBcv: _tasa?.valor,
+      pagoBanco: _banco,
+      pagoMetodo: _metodo.label,
+      pagoEstado: PagoStatus.pendiente,
+      pagoCedula: _cedulaPago.text.trim(),
+      pagoTelefono: _telefonoPago.text.trim(),
+      pagoComprobanteUrl: urlComprobante,
     );
   }
 
-  Widget _buildCurrentStepContent() {
-    switch (_currentStep) {
-      case 1: return _buildMedicalForm();
-      case 2: return _buildClinicPaymentInstructions();
-      case 3: return _buildRegisterPaymentForm();
-      default: return _buildMedicalForm();
+  /// Apaga el indicador y deja el motivo a la vista, en el dialogo y en el
+  /// SnackBar. El banner es el que de verdad se lee: el SnackBar aparece
+  /// detras de la barrera modal.
+  void _fallo(String mensaje) {
+    if (!mounted) {
+      return;
     }
+    setState(() {
+      _guardando = false;
+      _progreso = null;
+      _fase = '';
+      _errorEnvio = mensaje;
+    });
+    mostrarAviso(context, mensaje, esError: true);
   }
 
-  Widget _buildMedicalForm() {
+  // ------------------------------------------------------------------ vista
+
+  @override
+  Widget build(BuildContext context) {
+    final editando = widget.appointment?.id.isNotEmpty ?? false;
+    final titulos = [
+      editando ? 'Modificar cita' : 'Agendar cita pediatrica',
+      'Datos para el pago',
+      'Registrar el pago',
+    ];
+
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      titlePadding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(titulos[_paso - 1],
+              style:
+                  const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          Text(
+            '${DateFormat("EEEE d 'de' MMMM", 'es').format(widget.appointmentDateTime)} · ${widget.timeString}',
+            style:
+                const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: 14),
+          _Pasos(actual: _paso),
+        ],
+      ),
+      content: SizedBox(
+        width: 520,
+        child: _guardando
+            ? SizedBox(height: 220, child: _indicadorDeGuardado())
+            : SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    if (_errorEnvio != null) ...<Widget>[
+                      _bannerDeError(_errorEnvio!),
+                      const SizedBox(height: 14),
+                    ],
+                    switch (_paso) {
+                      1 => _formularioPaciente(),
+                      2 => _instruccionesPago(),
+                      _ => _formularioPago(),
+                    },
+                  ],
+                ),
+              ),
+      ),
+      actions: _guardando
+          ? null
+          : [
+              TextButton(
+                onPressed: () => _paso > 1
+                    ? setState(() => _paso--)
+                    : Navigator.pop(context),
+                child: Text(_paso == 1 ? 'Cancelar' : 'Atras',
+                    style: const TextStyle(color: AppColors.textMuted)),
+              ),
+              ElevatedButton(
+                onPressed: _avanzar,
+                child: Text(switch (_paso) {
+                  1 => 'Continuar al pago',
+                  2 => 'Ya pagué',
+                  _ => 'Confirmar cita',
+                }),
+              ),
+            ],
+    );
+  }
+
+  /// Indicador de la reserva. Muestra en que va (comprobante o cita) y, si
+  /// Storage informa el avance, el porcentaje real de la subida.
+  Widget _indicadorDeGuardado() {
+    final avance = _progreso;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          SizedBox(
+            width: 220,
+            child: LinearProgressIndicator(
+              value: avance,
+              color: AppColors.primary,
+              backgroundColor: const Color(0xFFE3EAE9),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            _fase.isEmpty ? 'Guardando tu cita...' : _fase,
+            style:
+                const TextStyle(fontSize: 13.5, color: AppColors.textSecondary),
+          ),
+          if (avance != null) ...<Widget>[
+            const SizedBox(height: 4),
+            Text(
+              '${(avance * 100).clamp(0, 100).toStringAsFixed(0)} %',
+              style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+            ),
+          ],
+          const SizedBox(height: 12),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 24),
+            child: Text(
+              'Si algo falla te avisamos aqui mismo, la ventana no se queda '
+              'trabada.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Aviso rojo dentro del dialogo con el motivo del ultimo fallo.
+  Widget _bannerDeError(String mensaje) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+      decoration: BoxDecoration(
+        color: AppColors.dangerSoft,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.danger.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Icon(Icons.error_outline, color: AppColors.danger, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              mensaje,
+              style:
+                  const TextStyle(fontSize: 12.5, color: AppColors.danger),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Ocultar',
+            icon: const Icon(Icons.close, size: 16, color: AppColors.danger),
+            onPressed: () => setState(() => _errorEnvio = null),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ------------------------------------------------------------- paso 1
+
+  Widget _formularioPaciente() {
     return Form(
-      key: _formKey,
+      key: _formPaciente,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Divider(),
           const SizedBox(height: 8),
-
           TextFormField(
-            controller: _representativeNameController,
+            controller: _representante,
             decoration: const InputDecoration(
-              labelText: 'Nombre y Apellido del Representante', 
-              prefixIcon: Icon(Icons.assignment_ind_outlined), 
-              border: OutlineInputBorder()
-            ),
-            validator: (value) => value!.isEmpty ? 'Requerido' : null,
+                labelText: 'Nombre del representante',
+                prefixIcon: Icon(Icons.assignment_ind_outlined)),
+            validator: (v) =>
+                (v == null || v.trim().isEmpty) ? 'Requerido' : null,
           ),
-          const SizedBox(height: 16),
-          
-          // 🚀 CAMPO DE TELÉFONO PARA EL REPRESENTANTE/CONTACTO
+          const SizedBox(height: 14),
           TextFormField(
-            controller: _phoneController,
+            controller: _telefono,
             keyboardType: TextInputType.phone,
             decoration: const InputDecoration(
-              labelText: 'Teléfono de Contacto', 
-              prefixIcon: Icon(Icons.phone), 
-              border: OutlineInputBorder()
-            ),
-            validator: (value) => value!.isEmpty ? 'Requerido' : null,
+                labelText: 'Telefono de contacto',
+                prefixIcon: Icon(Icons.phone)),
+            validator: (v) =>
+                (v == null || v.trim().isEmpty) ? 'Requerido' : null,
           ),
-          const SizedBox(height: 16),
-
-          if (userId != null) ...[
-            StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('patients')
-                  .where('representativeId', isEqualTo: userId)
-                  .snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-
-                final patients = snapshot.data?.docs ?? [];
-                
-                if (patients.isEmpty && !_isCreatingNewPatient) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    setState(() => _isCreatingNewPatient = true);
-                  });
-                }
-
-                return Row(
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        isExpanded: true,
-                        initialValue: _selectedPatientId,
-                        decoration: const InputDecoration(
-                          labelText: 'Seleccionar Niño/a',
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.child_care, color: Colors.teal),
-                        ),
-                        hint: const Text('Elija un paciente registrado...'),
-                        items: patients.map((doc) {
-                          final data = doc.data() as Map<String, dynamic>;
-                          return DropdownMenuItem(
-                            value: doc.id,
-                            child: Text(data['patientName'] ?? 'Sin nombre'),
-                          );
-                        }).toList(),
-                        onChanged: _isCreatingNewPatient ? null : (value) {
-                          setState(() {
-                            _selectedPatientId = value;
-                            final selectedDoc = patients.firstWhere((doc) => doc.id == value);
-                            final data = selectedDoc.data() as Map<String, dynamic>;
-                            
-                            _patientNameController.text = data['patientName'] ?? '';
-                            _addressController.text = data['address'] ?? '';
-                            if (data['patientBirthDate'] != null) {
-                              _selectedBirthDate = (data['patientBirthDate'] as Timestamp).toDate();
-                            }
-                            if (data['representativeName'] != null && data['representativeName'].toString().isNotEmpty) {
-                              _representativeNameController.text = data['representativeName'];
-                            }
-                            if (data['email'] != null && data['email'].toString().isNotEmpty) {
-                              _emailController.text = data['email'];
-                            }
-                            // 🚀 AUTOCOMPLETAMOS EL TELÉFONO
-                            if (data['phone'] != null && data['phone'].toString().isNotEmpty) {
-                              _phoneController.text = data['phone'];
-                            }
-                          });
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      tooltip: _isCreatingNewPatient ? 'Seleccionar existente' : 'Añadir nuevo hijo/a',
-                      icon: Icon(_isCreatingNewPatient ? Icons.list : Icons.person_add, color: Colors.teal, size: 30),
-                      onPressed: () {
-                        setState(() {
-                          _isCreatingNewPatient = !_isCreatingNewPatient;
-                          if (_isCreatingNewPatient) {
-                            _selectedPatientId = null;
-                            _patientNameController.clear();
-                            _addressController.clear();
-                            _selectedBirthDate = null;
-                          }
-                        });
-                      },
-                    ),
-                  ],
-                );
-              },
-            ),
-            const SizedBox(height: 16),
+          const SizedBox(height: 14),
+          if (_uid != null) _selectorDeHijo(), // 🚀 Corregido: sin llaves
+          if (_pacienteNuevo) ...[
+            const SizedBox(height: 14),
+            _datosNuevoPaciente(),
           ],
-
-          if (_isCreatingNewPatient) ...[
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(border: Border.all(color: Colors.teal.shade200), borderRadius: BorderRadius.circular(8), color: Colors.teal.shade50),
-              child: Column(
-                children: [
-                  const Text('Datos del Nuevo Paciente', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.teal)),
-                  const SizedBox(height: 10),
-                  TextFormField(
-                    controller: _patientNameController,
-                    decoration: const InputDecoration(labelText: 'Nombre y Apellido del Niño/a', prefixIcon: Icon(Icons.person_outline), border: OutlineInputBorder(), isDense: true),
-                    validator: (value) => value!.isEmpty ? 'Requerido' : null,
-                  ),
-                  const SizedBox(height: 12),
-                  InkWell(
-                    onTap: () async {
-                      final DateTime? picked = await showDatePicker(
-                        context: context,
-                        initialDate: _selectedBirthDate ?? DateTime.now().subtract(const Duration(days: 365)),
-                        firstDate: DateTime(2010),
-                        lastDate: DateTime.now(),
-                      );
-                      if (picked != null) setState(() { _selectedBirthDate = picked; });
-                    },
-                    child: InputDecorator(
-                      decoration: InputDecoration(labelText: 'Fecha de Nacimiento', prefixIcon: const Icon(Icons.cake_outlined, color: Colors.teal), border: const OutlineInputBorder(), isDense: true, errorText: _selectedBirthDate == null ? 'Requerido' : null),
-                      child: Text(_selectedBirthDate == null ? '' : '${_selectedBirthDate!.day}/${_selectedBirthDate!.month}/${_selectedBirthDate!.year}'),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _addressController,
-                    decoration: const InputDecoration(labelText: 'Dirección de Habitación', prefixIcon: Icon(Icons.home_outlined), border: OutlineInputBorder(), isDense: true),
-                    validator: (value) => value!.isEmpty ? 'Requerido' : null,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-          ],
-
+          const SizedBox(height: 14),
           TextFormField(
-            controller: _reasonController,
-            maxLines: 2, 
-            decoration: const InputDecoration(labelText: 'Motivo de la Consulta (Opcional)', border: OutlineInputBorder(), prefixIcon: Icon(Icons.medical_services_outlined)),
+            controller: _motivo,
+            maxLines: 2,
+            decoration: const InputDecoration(
+              labelText: 'Motivo de la consulta',
+              helperText: 'Le ayuda a la doctora a preparar la consulta.',
+              prefixIcon: Icon(Icons.medical_services_outlined),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildClinicPaymentInstructions() {
-    double totalEnBs = _montoUSD * _tasaBCV;
+  Widget _selectorDeHijo() {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('patients')
+          .where('representativeId', isEqualTo: _uid)
+          .snapshots(),
+      builder: (context, snap) {
+        if (snap.hasError) {
+          return EstadoError(error: snap.error);
+        }
+        if (!snap.hasData) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 14),
+            child: LinearProgressIndicator(minHeight: 2),
+          );
+        }
+
+        final hijos = snap.data!.docs;
+        final sinHijos = hijos.isEmpty;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    isExpanded: true,
+                    initialValue: hijos.any((d) => d.id == _patientId)
+                        ? _patientId
+                        : null,
+                    decoration: InputDecoration(
+                      labelText: 'Seleccionar niño o niña',
+                      prefixIcon: const Icon(Icons.child_care),
+                      helperText:
+                          sinHijos ? 'Aun no tienes hijos registrados' : null,
+                    ),
+                    hint: Text(
+                        sinHijos ? 'Agrega el primero' : 'Elige un paciente'),
+                    items: [
+                      for (final d in hijos)
+                        DropdownMenuItem(
+                          value: d.id,
+                          child: Text(d.data()['patientName']?.toString() ??
+                              'Sin nombre'),
+                        ),
+                    ],
+                    onChanged: _pacienteNuevo
+                        ? null
+                        : (valor) => _tomarHijo(hijos, valor),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                IconButton.filledTonal(
+                  tooltip: _pacienteNuevo
+                      ? 'Elegir uno registrado'
+                      : 'Agregar otro hijo o hija',
+                  icon:
+                      Icon(_pacienteNuevo ? Icons.list : Icons.person_add_alt),
+                  onPressed: () => setState(() {
+                    _pacienteNuevo = !_pacienteNuevo;
+                    if (_pacienteNuevo) {
+                      _patientId = null;
+                      _paciente.clear();
+                      _direccion.clear();
+                      _nacimiento = null;
+                    }
+                  }),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _tomarHijo(
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> hijos, String? id) {
+    if (id == null) {
+      return;
+    }
+    QueryDocumentSnapshot<Map<String, dynamic>>? doc;
+    for (final h in hijos) {
+      if (h.id == id) {
+        doc = h;
+        break;
+      }
+    }
+    if (doc == null) {
+      return;
+    }
+    final d = doc.data();
+
+    setState(() {
+      _patientId = id;
+      _paciente.text = d['patientName']?.toString() ?? '';
+      _direccion.text = d['address']?.toString() ?? '';
+      final nac = d['patientBirthDate'];
+      _nacimiento = nac is Timestamp ? nac.toDate() : null;
+      if ((d['representativeName'] ?? '').toString().isNotEmpty) {
+        _representante.text = d['representativeName'].toString();
+      }
+      if ((d['email'] ?? '').toString().isNotEmpty) {
+        _correo.text = d['email'].toString();
+      }
+      // El telefono ahora si viene guardado en la ficha del paciente.
+      if ((d['phone'] ?? '').toString().isNotEmpty) {
+        _telefono.text = d['phone'].toString();
+      }
+
+      // Si la ficha vino de la secretaria sin fecha de nacimiento, se abre el
+      // bloque para completarla en vez de dejar el boton muerto.
+      if (_nacimiento == null) {
+        _pacienteNuevo = true;
+      }
+    });
+  }
+
+  Widget _datosNuevoPaciente() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.primarySoft.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Datos del paciente',
+              style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.primaryDark,
+                  fontSize: 13.5)),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _paciente,
+            decoration: const InputDecoration(
+                labelText: 'Nombre del niño o niña',
+                prefixIcon: Icon(Icons.person_outline),
+                isDense: true),
+            validator: (v) =>
+                (v == null || v.trim().isEmpty) ? 'Requerido' : null,
+          ),
+          const SizedBox(height: 12),
+          FormField<DateTime>(
+            initialValue: _nacimiento,
+            // Ahora es un validador del formulario, asi que se marca en rojo
+            // como cualquier otro campo en lugar de bloquear en silencio.
+            validator: (_) => _nacimiento == null ? 'Requerida' : null,
+            builder: (campo) => InkWell(
+              onTap: () async {
+                final elegida = await showDatePicker(
+                  context: context,
+                  initialDate: _nacimiento ??
+                      DateTime.now().subtract(const Duration(days: 730)),
+                  firstDate: DateTime(2005),
+                  lastDate: DateTime.now(),
+                );
+                if (elegida != null) {
+                  setState(() => _nacimiento = elegida);
+                  campo.didChange(elegida);
+                }
+              },
+              borderRadius: BorderRadius.circular(8),
+              child: InputDecorator(
+                decoration: InputDecoration(
+                  labelText: 'Fecha de nacimiento',
+                  prefixIcon: const Icon(Icons.cake_outlined),
+                  isDense: true,
+                  errorText: campo.errorText,
+                ),
+                child: Text(_nacimiento == null
+                    ? 'Toca para elegir'
+                    : DateFormat("d 'de' MMMM 'de' y", 'es')
+                        .format(_nacimiento!)),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _direccion,
+            decoration: const InputDecoration(
+                labelText: 'Direccion de habitacion',
+                prefixIcon: Icon(Icons.home_outlined),
+                isDense: true),
+            validator: (v) =>
+                (v == null || v.trim().isEmpty) ? 'Requerido' : null,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ------------------------------------------------------------- paso 2
+
+  Widget _instruccionesPago() {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Divider(),
         const SizedBox(height: 8),
-        const Text('Método de pago:', style: TextStyle(fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        DropdownButtonFormField<String>(
-          initialValue: _selectedPaymentMethod,
-          decoration: const InputDecoration(border: OutlineInputBorder()),
-          items: ['Pago Móvil', 'Transferencia Bancaria'].map((method) => DropdownMenuItem(value: method, child: Text(method))).toList(),
-          onChanged: (value) => setState(() { _selectedPaymentMethod = value!; }),
+        DropdownButtonFormField<MetodoPago>(
+          initialValue: _metodo,
+          decoration: const InputDecoration(labelText: 'Metodo de pago'),
+          items: [
+            for (final m in [MetodoPago.pagoMovil, MetodoPago.transferencia])
+              DropdownMenuItem(value: m, child: Text(m.label)),
+          ],
+          onChanged: (v) => setState(() => _metodo = v ?? MetodoPago.pagoMovil),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 18),
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(color: Colors.teal.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.teal.withValues(alpha: 0.3))),
+          decoration: BoxDecoration(
+            color: AppColors.primarySoft.withValues(alpha: 0.6),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(_selectedPaymentMethod == 'Pago Móvil' ? 'Datos para Realizar Pago Móvil:' : 'Datos para Transferencia Bancaria:', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.teal)),
-              const SizedBox(height: 6),
-              if (_selectedPaymentMethod == 'Pago Móvil') ...[
-                const Text('• Banco: BNC (0191)\n• Teléfono: 0412-5555555\n• Cédula: V-12.345.678'),
+              Text(
+                _metodo == MetodoPago.pagoMovil
+                    ? 'Datos para el pago movil'
+                    : 'Datos para la transferencia',
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, color: AppColors.primaryDark),
+              ),
+              const SizedBox(height: 10),
+              // Los datos bancarios ya no estan escritos en el codigo: salen de
+              // `configuracion/clinica` y se cambian sin volver a desplegar.
+              if (_metodo == MetodoPago.pagoMovil) ...[
+                _linea('Banco', _config.bancoReceptor),
+                _linea('Telefono', _config.telefonoPagoMovil),
+                _linea('Cedula/RIF', _config.cedulaReceptor),
               ] else ...[
-                const Text('• Banco: BNC\n• Cuenta: 0191-0000-0000-0000-0000\n• RIF: J-55555555-0'),
+                _linea('Banco', _config.bancoReceptor),
+                _linea('Cuenta', _config.numeroCuenta),
+                _linea('RIF', _config.rif),
               ],
-              const Divider(color: Colors.teal),
-              _isLoadingTasa 
-                ? const Center(child: CircularProgressIndicator(color: Colors.teal))
-                : Text('TOTAL A PAGAR: ${totalEnBs.toStringAsFixed(2)} Bs.', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.redAccent)),
+              const Divider(height: 24),
+              _bloqueTotal(),
             ],
           ),
         ),
@@ -420,121 +911,303 @@ class _BookingDialogState extends State<BookingDialog> {
     );
   }
 
-  Widget _buildRegisterPaymentForm() {
+  Widget _linea(String etiqueta, String valor) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 92,
+              child: Text(etiqueta,
+                  style: const TextStyle(
+                      fontSize: 12.5, color: AppColors.textSecondary)),
+            ),
+            Expanded(
+              child: SelectableText(valor,
+                  style: const TextStyle(
+                      fontSize: 13.5, fontWeight: FontWeight.w600)),
+            ),
+          ],
+        ),
+      );
+
+  Widget _bloqueTotal() {
+    if (_cargandoTasa) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2)),
+            SizedBox(width: 12),
+            Text('Consultando la tasa del dia...',
+                style: TextStyle(fontSize: 13)),
+          ],
+        ),
+      );
+    }
+
+    // Ya no se muestra "TOTAL A PAGAR: 0.00 Bs." cuando la consulta falla:
+    // se dice lo que paso y se ofrece reintentar.
+    if (_tasa == null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.error_outline,
+                  size: 18, color: AppColors.danger),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _errorTasa is TasaNoDisponible
+                      ? 'No pudimos obtener la tasa oficial. Intenta de nuevo en un momento.'
+                      : 'Hubo un problema al calcular el total.',
+                  style:
+                      const TextStyle(fontSize: 12.5, color: AppColors.danger),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _cargarTasa,
+            icon: const Icon(Icons.refresh, size: 17),
+            label: const Text('Reintentar'),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+            'Consulta: \$${_config.tarifaUsd.toStringAsFixed(2)}  ·  '
+            'Tasa ${_tasa!.valor.toStringAsFixed(2)} Bs./\$',
+            style: const TextStyle(
+                fontSize: 12.5, color: AppColors.textSecondary)),
+        const SizedBox(height: 6),
+        Text('Total: ${_totalBs.toStringAsFixed(2)} Bs.',
+            style: const TextStyle(
+                fontSize: 19,
+                fontWeight: FontWeight.bold,
+                color: AppColors.accentDark)),
+        if (_tasa!.esRespaldo)
+          Padding(
+            // 🚀 Corregido: sin llaves en el if dentro de la lista
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              'Tasa del ${DateFormat('d/MM', 'es').format(_tasa!.fecha)}: no pudimos consultar la de hoy. '
+              'Si el monto cambio, la secretaria lo ajustara al verificar.',
+              style: const TextStyle(fontSize: 11.5, color: AppColors.warning),
+            ),
+          ),
+      ],
+    );
+  }
+
+  // ------------------------------------------------------------- paso 3
+
+  Widget _formularioPago() {
     return Form(
-      key: _paymentFormKey,
+      key: _formPago,
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Divider(),
+          const SizedBox(height: 8),
           DropdownButtonFormField<String>(
-            initialValue: _selectedOriginBank,
-            decoration: const InputDecoration(labelText: 'Banco Emisor', border: OutlineInputBorder()),
-            items: _bancosVenezuela.map((banco) => DropdownMenuItem(value: banco, child: Text(banco))).toList(),
-            onChanged: (value) => setState(() { _selectedOriginBank = value; }),
-            validator: (value) => value == null ? 'Selecciona el banco' : null,
+            initialValue: _banco,
+            isExpanded: true,
+            decoration: const InputDecoration(
+                labelText: 'Banco emisor',
+                prefixIcon: Icon(Icons.account_balance_outlined)),
+            items: [
+              for (final b in kBancosVenezuela)
+                DropdownMenuItem(value: b, child: Text(b)),
+            ],
+            onChanged: (v) => setState(() => _banco = v),
+            validator: (v) =>
+                v == null ? 'Selecciona el banco desde el que pagaste' : null,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           TextFormField(
-            controller: _referenceController,
-            decoration: const InputDecoration(labelText: 'Referencia Bancaria (Últimos 6 dígitos)', border: OutlineInputBorder()),
-            validator: (value) => value!.isEmpty ? 'Ingresa la referencia' : null,
+            controller: _referencia,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+                labelText: 'Referencia bancaria',
+                helperText: 'Los ultimos 6 digitos'),
+            validator: (v) => (v == null || v.trim().length < 4)
+                ? 'Ingresa la referencia'
+                : null,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           TextFormField(
-            controller: _senderIdController,
-            decoration: const InputDecoration(labelText: 'Cédula del Titular de la Cuenta', border: OutlineInputBorder()),
-            validator: (value) => value!.isEmpty ? 'Ingresa la cédula' : null,
+            controller: _cedulaPago,
+            decoration: const InputDecoration(labelText: 'Cedula del Emisor'),
+            validator: (v) =>
+                (v == null || v.trim().isEmpty) ? 'Requerida' : null,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           TextFormField(
-            controller: _pagoTelefonoController,
+            controller: _telefonoPago,
             keyboardType: TextInputType.phone,
-            decoration: const InputDecoration(labelText: 'Número de Teléfono del Pago', border: OutlineInputBorder()),
-            validator: (value) => value!.isEmpty ? 'Ingresa el número de teléfono' : null,
+            decoration: const InputDecoration(labelText: 'Telefono del Emisor'),
+            validator: (v) =>
+                (v == null || v.trim().isEmpty) ? 'Requerido' : null,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           TextFormField(
-            controller: _amountPaidController,
+            controller: _monto,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: const InputDecoration(labelText: 'Monto Transferido (Bs.)', border: OutlineInputBorder()),
-            validator: (value) => value!.isEmpty ? 'Ingresa el monto' : null,
+            decoration: InputDecoration(
+              labelText: 'Monto transferido (Bs.)',
+              helperText: _tasa == null
+                  ? null
+                  : 'Total solicitado: ${_totalBs.toStringAsFixed(2)} Bs.',
+            ),
+            validator: (v) {
+              final monto =
+                  double.tryParse((v ?? '').trim().replaceAll(',', '.'));
+              if (monto == null || monto <= 0) {
+                return 'Ingresa el monto que transferiste';
+              }
+              // Antes se guardaba cualquier cifra sin compararla con el total.
+              if (_tasa != null && monto + 0.01 < _totalBs) {
+                return 'Es menor al total (${_totalBs.toStringAsFixed(2)} Bs.)';
+              }
+              return null;
+            },
           ),
+          const SizedBox(height: 18),
+          _selectorComprobante(),
         ],
       ),
     );
   }
 
-  void _handleNavigationAndSubmit() async {
-    if (_currentStep == 1) {
-      if (!_isCreatingNewPatient && _selectedPatientId == null) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Por favor seleccione un paciente o cree uno nuevo.')));
-        return;
-      }
-      if (_formKey.currentState!.validate() && _selectedBirthDate != null) {
-        setState(() { _currentStep = 2; });
-      } else if (_selectedBirthDate == null && _isCreatingNewPatient) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('La fecha de nacimiento es requerida')));
-      }
-    } else if (_currentStep == 2) {
-      setState(() { _currentStep = 3; });
-    } else {
-      if (_paymentFormKey.currentState!.validate()) {
-        setState(() { _isSaving = true; }); 
+  Widget _selectorComprobante() {
+    final tiene = _comprobante != null || (_comprobanteUrl ?? '').isNotEmpty;
+    final nombre = _comprobanteNombre ?? _comprobante?.name;
+    final esPdf = (nombre ?? _comprobanteUrl ?? '')
+        .toLowerCase()
+        .split('?')
+        .first
+        .endsWith('.pdf');
 
-        final updatedAppointment = AppointmentEntity(
-          id: widget.appointment?.id ?? '', 
-          patientName: _patientNameController.text.trim(),
-          patientBirthDate: _selectedBirthDate!,
-          address: _addressController.text.trim(),
-          representativeName: _representativeNameController.text.trim(),
-          email: _emailController.text.trim(),
-          phone: _phoneController.text.trim(), // 🚀 AQUÍ RESOLVEMOS EL ERROR 4
-          appointmentDateTime: _currentDateTime, 
-          status: 'pending',
-          
-          pagoReferencia: _referenceController.text.trim(),
-          pagoMonto: double.tryParse(_amountPaidController.text.trim()) ?? 0.0,
-          pagoBanco: _selectedOriginBank,
-          pagoMetodo: _selectedPaymentMethod,
-          pagoEstado: 'pending', 
-          pagoCedula: _senderIdController.text.trim(),       
-          pagoTelefono: _pagoTelefonoController.text.trim(), 
-        );
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: tiene ? AppColors.successSoft : AppColors.warningSoft,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: tiene
+              ? AppColors.success.withValues(alpha: 0.4)
+              : AppColors.warning.withValues(alpha: 0.45),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            tiene
+                ? (esPdf ? Icons.picture_as_pdf : Icons.check_circle)
+                : Icons.add_a_photo_outlined,
+            color: tiene ? AppColors.success : AppColors.warning,
+            size: 26,
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  tiene
+                      ? 'Comprobante adjunto'
+                      : 'Comprobante del pago (obligatorio)',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13.5,
+                    color: tiene ? AppColors.success : AppColors.warning,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  nombre ??
+                      (tiene
+                          ? 'Ya cargado anteriormente'
+                          : 'Imagen (JPG, PNG, WEBP) o PDF de la transferencia '
+                              'o el pago movil'),
+                  style: const TextStyle(
+                      fontSize: 12, color: AppColors.textSecondary),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          OutlinedButton(
+            onPressed: _elegirComprobante,
+            child: Text(tiene ? 'Cambiar' : 'Adjuntar'),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
-        widget.onConfirmBooking(updatedAppointment);
+/// Indicador de los tres pasos del formulario.
+class _Pasos extends StatelessWidget {
+  const _Pasos({required this.actual});
+  final int actual;
 
-        final String correoPaciente = _emailController.text.trim();
-        final String nombrePaciente = _patientNameController.text.trim();
-        final String fechaCitaStr = "${_currentDateTime.day}/${_currentDateTime.month}/${_currentDateTime.year}";
-        final String horaCitaStr = _currentTimeString;
-        const String numeroDoctora = "+58 412-5555555"; 
-
-        try {
-          final urlCorreo = Uri.parse('https://api.emailjs.com/api/v1.0/email/send');
-          await http.post(
-            urlCorreo,
-            headers: {'Content-Type': 'application/json'},
-            body: json.encode({
-              'service_id': 'service_vfquxn8',  
-              'template_id': 'template_brfi9f5', 
-              'user_id': 'wC6RQuuJG9ZfdQxp9',
-              'template_params': {
-                'to_email': correoPaciente,
-                'patient_name': nombrePaciente,
-                'appointment_date': fechaCitaStr,
-                'appointment_time': horaCitaStr,
-                'doctor_phone': numeroDoctora,
-              }
-            }),
-          ).timeout(const Duration(seconds: 5));
-
-          if (mounted) Navigator.of(context).pop(); 
-        } catch (e) {
-          debugPrint("Error EmailJS: $e");
-          if (mounted) Navigator.of(context).pop(); 
-        }
-      }
-    }
-  } 
+  @override
+  Widget build(BuildContext context) {
+    const etiquetas = ['Paciente', 'Pago', 'Comprobante'];
+    return Row(
+      children: [
+        for (var i = 1; i <= 3; i++) ...[
+          Container(
+            width: 22,
+            height: 22,
+            decoration: BoxDecoration(
+              color: i <= actual ? AppColors.primary : const Color(0xFFE3EAE9),
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: i < actual
+                  ? const Icon(Icons.check, size: 13, color: Colors.white)
+                  : Text('$i',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: i <= actual ? Colors.white : AppColors.textMuted,
+                      )),
+            ),
+          ),
+          const SizedBox(width: 7),
+          Text(
+            etiquetas[i - 1],
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: i == actual ? FontWeight.bold : FontWeight.normal,
+              color: i <= actual ? AppColors.primaryDark : AppColors.textMuted,
+            ),
+          ),
+          if (i < 3)
+            Expanded(
+              // 🚀 Corregido: sin llaves en el if dentro de la fila
+              child: Container(
+                height: 1.5,
+                margin: const EdgeInsets.symmetric(horizontal: 8),
+                color: i < actual ? AppColors.primary : const Color(0xFFE3EAE9),
+              ),
+            ),
+        ],
+      ],
+    );
+  }
 }

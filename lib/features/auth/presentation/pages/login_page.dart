@@ -1,10 +1,10 @@
 // lib/features/auth/presentation/pages/login_page.dart
-
-import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:pedia_actual/features/schedule/presentation/pages/register_page.dart';
-import '../../../schedule/presentation/pages/main_layout_page.dart';
+import 'package:flutter/material.dart';
+
+import '../../../../core/constants/app_colors.dart';
+import '../../../../core/widgets/async_states.dart';
+import 'register_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -15,168 +15,187 @@ class LoginPage extends StatefulWidget {
 
 class _LoginPageState extends State<LoginPage> {
   final _formKey = GlobalKey<FormState>();
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
-  bool _isLoading = false;
-  bool _obscurePassword = true;
+  final _correo = TextEditingController();
+  final _clave = TextEditingController();
+  bool _cargando = false;
+  bool _oculta = true;
 
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  @override
+  void dispose() {
+    _correo.dispose();
+    _clave.dispose();
+    super.dispose();
+  }
 
-  Future<void> _handleLogin() async {
-    if (!_formKey.currentState!.validate()) return;
-
-    setState(() { _isLoading = true; });
+  Future<void> _entrar() async {
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+    setState(() => _cargando = true);
 
     try {
-      UserCredential userCredential = await _auth.signInWithEmailAndPassword(
-        email: _emailController.text.trim(),
-        password: _passwordController.text.trim(),
+      await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: _correo.text.trim(),
+        password: _clave.text,
       );
-
-      User? firebaseUser = userCredential.user;
-
-      if (firebaseUser != null) {
-        // 🚀 CAMBIO: Usamos .where() para buscar por el campo 'uid' en lugar de .doc()
-        QuerySnapshot querySnapshot = await _firestore
-            .collection('users')
-            .where('uid', isEqualTo: firebaseUser.uid)
-            .limit(1)
-            .get();
-
-        String name = 'Usuario';
-        UserRole role = UserRole.patient; // Por defecto es paciente
-
-        if (querySnapshot.docs.isNotEmpty) {
-          final data = querySnapshot.docs.first.data() as Map<String, dynamic>;
-          name = data['name'] ?? 'Usuario';
-          final String firestoreRole = data['role'] ?? 'patient';
-          
-          if (firestoreRole == 'doctor') {
-            role = UserRole.doctor;
-          } else if (firestoreRole == 'secretary') {
-            role = UserRole.secretary;
-          } else {
-            role = UserRole.patient;
-          }
-        } else {
-          name = firebaseUser.displayName ?? 'Padre de Familia';
-          role = UserRole.patient;
-        }
-
-        // 🚀 RED DE SEGURIDAD: Forzar rol si el correo coincide exactamente
-        if (firebaseUser.email == 'secretaria@pediactual.com') {
-          role = UserRole.secretary;
-        }
-
-        if (!mounted) return;
-
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => MainLayoutPage(
-              currentUser: CurrentUser(name: name, role: role),
-            ),
-          ),
-        );
-      }
+      // No hace falta navegar: el StreamBuilder de main.dart detecta la sesion
+      // y resuelve el rol en un solo lugar. Antes esta pantalla duplicaba esa
+      // logica y las dos podian quedar desalineadas.
     } on FirebaseAuthException catch (e) {
-      String errorMessage = 'Error al iniciar sesión.';
-      if (e.code == 'user-not-found' || e.code == 'wrong-password') {
-        errorMessage = 'Correo o contraseña incorrectos.';
+      if (!mounted) {
+        return;
       }
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(errorMessage), backgroundColor: Colors.redAccent),
-      );
+      setState(() => _cargando = false);
+      mostrarAviso(context, _mensaje(e.code), esError: true);
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.redAccent),
-      );
-    } finally {
-      if (mounted) { setState(() { _isLoading = false; }); }
+      if (!mounted) {
+        return;
+      }
+      setState(() => _cargando = false);
+      mostrarAviso(context, 'No pudimos iniciar sesion. Intenta de nuevo.',
+          esError: true);
     }
   }
+
+  Future<void> _recuperar() async {
+    final correo = _correo.text.trim();
+    if (correo.isEmpty) {
+      mostrarAviso(context, 'Escribe tu correo y vuelve a pulsar aqui.',
+          esError: true);
+      return;
+    }
+    try {
+      await FirebaseAuth.instance.sendPasswordResetEmail(email: correo);
+      if (mounted) {
+        mostrarAviso(context, 'Te enviamos un enlace a $correo', esExito: true);
+      }
+    } catch (_) {
+      if (mounted) {
+        mostrarAviso(context, 'No pudimos enviar el enlace.', esError: true);
+      }
+    }
+  }
+
+  static String _mensaje(String codigo) => switch (codigo) {
+        'user-not-found' ||
+        'wrong-password' ||
+        'invalid-credential' =>
+          'Correo o contraseña incorrectos.',
+        'invalid-email' => 'Ese correo no tiene un formato valido.',
+        'user-disabled' =>
+          'Esta cuenta fue deshabilitada. Comunicate con la clinica.',
+        'too-many-requests' => 'Demasiados intentos. Espera unos minutos.',
+        'network-request-failed' => 'Sin conexion. Revisa tu internet.',
+        _ => 'No pudimos iniciar sesion. Intenta de nuevo.',
+      };
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF4F7F6),
+      backgroundColor: AppColors.background,
       body: Center(
-        child: Card(
-          elevation: 4,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Container(
-            width: 400,
-            padding: const EdgeInsets.all(32),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: const [
-                      Text('Pedi', style: TextStyle(color: Color(0xFF4594A4), fontSize: 32, fontWeight: FontWeight.w300)),
-                      Text('Actual', style: TextStyle(color: Color(0xFFEAA171), fontSize: 32, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  const Text('PediActual - Inicio de Sesión', style: TextStyle(color: Colors.grey)),
-                  const SizedBox(height: 32),
-                  TextFormField(
-                    controller: _emailController,
-                    keyboardType: TextInputType.emailAddress,
-                    decoration: const InputDecoration(
-                      labelText: 'Correo Electrónico',
-                      prefixIcon: Icon(Icons.email_outlined, color: Color(0xFF4594A4)),
-                      border: OutlineInputBorder(),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Card(
+            child: Container(
+              width: 400,
+              padding: const EdgeInsets.all(32),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text('Pedi',
+                            style: TextStyle(
+                                color: AppColors.primary,
+                                fontSize: 32,
+                                fontWeight: FontWeight.w300)),
+                        Text('Actual',
+                            style: TextStyle(
+                                color: AppColors.accent,
+                                fontSize: 32,
+                                fontWeight: FontWeight.bold)),
+                      ],
                     ),
-                    validator: (value) => value!.isEmpty ? 'Ingresa tu correo' : null,
-                  ),
-                  const SizedBox(height: 24),
-                  TextFormField(
-                    controller: _passwordController,
-                    obscureText: _obscurePassword,
-                    decoration: InputDecoration(
-                      labelText: 'Contraseña',
-                      prefixIcon: const Icon(Icons.lock_outline, color: Color(0xFF4594A4)),
-                      suffixIcon: IconButton(
-                        icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
-                        onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                    const SizedBox(height: 6),
+                    const Text('Inicio de sesion',
+                        style: TextStyle(
+                            color: AppColors.textMuted, fontSize: 13.5)),
+                    const SizedBox(height: 30),
+                    TextFormField(
+                      controller: _correo,
+                      keyboardType: TextInputType.emailAddress,
+                      autofillHints: const [AutofillHints.email],
+                      decoration: const InputDecoration(
+                        labelText: 'Correo electronico',
+                        prefixIcon: Icon(Icons.email_outlined),
                       ),
-                      border: const OutlineInputBorder(),
+                      validator: (v) => (v == null || v.trim().isEmpty)
+                          ? 'Ingresa tu correo'
+                          : null,
                     ),
-                    validator: (value) => value!.isEmpty ? 'Ingresa tu contraseña' : null,
-                  ),
-                  const SizedBox(height: 32),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4594A4)),
-                      onPressed: _isLoading ? null : _handleLogin,
-                      child: _isLoading
-                          ? const CircularProgressIndicator(color: Colors.white)
-                          : const Text('Iniciar Sesión', style: TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 18),
+                    TextFormField(
+                      controller: _clave,
+                      obscureText: _oculta,
+                      autofillHints: const [AutofillHints.password],
+                      onFieldSubmitted: (_) => _cargando ? null : _entrar(),
+                      decoration: InputDecoration(
+                        labelText: 'Contraseña',
+                        prefixIcon: const Icon(Icons.lock_outline),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                              _oculta ? Icons.visibility_off : Icons.visibility,
+                              size: 20),
+                          onPressed: () => setState(() => _oculta = !_oculta),
+                        ),
+                      ),
+                      validator: (v) => (v == null || v.isEmpty)
+                          ? 'Ingresa tu contrasena'
+                          : null,
                     ),
-                  ),
-                  const SizedBox(height: 24),
-                  // 🚀 BOTÓN DE REGISTRO PARA LOS PADRES
-                  TextButton(
-                    onPressed: () {
-                      Navigator.push(
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: _recuperar,
+                        child: const Text('Olvidé mi contraseña',
+                            style: TextStyle(fontSize: 12.5)),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: ElevatedButton(
+                        onPressed: _cargando ? null : _entrar,
+                        child: _cargando
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                    color: Colors.white, strokeWidth: 2.4))
+                            : const Text('Iniciar sesion',
+                                style: TextStyle(fontSize: 15)),
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    TextButton(
+                      onPressed: () => Navigator.push(
                         context,
-                        MaterialPageRoute(builder: (context) => const RegisterPage()),
-                      );
-                    },
-                    child: const Text(
-                      '¿Eres nuevo? Regístrate como Representante aquí',
-                      style: TextStyle(color: Color(0xFFEAA171), fontWeight: FontWeight.bold),
+                        MaterialPageRoute(builder: (_) => const RegisterPage()),
+                      ),
+                      child: const Text(
+                        'Eres nuevo? Registrate como representante',
+                        style: TextStyle(
+                            color: AppColors.accentDark,
+                            fontWeight: FontWeight.bold),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),

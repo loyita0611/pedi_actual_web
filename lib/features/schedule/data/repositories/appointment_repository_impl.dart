@@ -1,60 +1,57 @@
 // lib/features/schedule/data/repositories/appointment_repository_impl.dart
-
+import '../../../../core/constants/app_status.dart';
 import '../../domain/entities/appointment_entity.dart';
 import '../../domain/repositories/appointment_repository.dart';
 import '../datasources/appointment_remote_data_source.dart';
 import '../models/appointment_model.dart';
 
 class AppointmentRepositoryImpl implements AppointmentRepository {
-  final AppointmentRemoteDataSource remoteDataSource;
-
   AppointmentRepositoryImpl({required this.remoteDataSource});
 
-  @override
-  Future<List<AppointmentEntity>> getAppointmentsByDate(DateTime date) async {
+  final AppointmentRemoteDataSource remoteDataSource;
+
+  /// Envuelve las llamadas conservando las excepciones de dominio.
+  ///
+  /// Antes todo se re-lanzaba como `Exception('Error al ...: $e')`, asi que la
+  /// interfaz no podia distinguir un horario ocupado de una caida de red y
+  /// terminaba mostrando el volcado tecnico completo al paciente.
+  Future<T> _ejecutar<T>(Future<T> Function() accion, String contexto) async {
     try {
-      final appointmentModels = await remoteDataSource.getAppointmentsByDate(date);
-      return appointmentModels; // AppointmentModel hereda de AppointmentEntity, por lo que es compatible
+      return await accion();
+    } on HorarioOcupadoException {
+      rethrow;
     } catch (e) {
-      throw Exception('Error al obtener las citas: $e');
+      throw Exception('$contexto: $e');
     }
   }
 
   @override
-  Future<void> bookAppointment(AppointmentEntity appointment) async {
-    try {
-      // Convertimos la entidad a modelo para enviarla al datasource
-      final appointmentModel = AppointmentModel(
-        id: appointment.id,
-        patientName: appointment.patientName,
-        patientBirthDate: appointment.patientBirthDate,
-        address: appointment.address,
-        representativeName: appointment.representativeName,
-        phone: appointment.phone,
-        email: appointment.email,
-        appointmentDateTime: appointment.appointmentDateTime,
-        status: appointment.status,
-        pagoReferencia: appointment.pagoReferencia,
-        pagoMonto: appointment.pagoMonto,
-        pagoBanco: appointment.pagoBanco,
-        pagoMetodo: appointment.pagoMetodo,
-        pagoEstado: appointment.pagoEstado,
-        pagoCedula: appointment.pagoCedula,
-        pagoTelefono: appointment.pagoTelefono,
-      );
-
-      await remoteDataSource.bookAppointment(appointmentModel);
-    } catch (e) {
-      throw Exception('Error al agendar la cita: $e');
-    }
-  }
+  Future<List<AppointmentEntity>> getAppointmentsByDate(DateTime date) =>
+      _ejecutar(() => remoteDataSource.getAppointmentsByDate(date), 'No se pudieron cargar las citas');
 
   @override
-  Future<void> cancelAppointment(String appointmentId) async {
-    try {
-      await remoteDataSource.cancelAppointment(appointmentId);
-    } catch (e) {
-      throw Exception('Error al cancelar la cita: $e');
-    }
-  }
+  Future<List<AppointmentEntity>> getAppointmentsByRepresentative(String uid) => _ejecutar(
+      () => remoteDataSource.getAppointmentsByRepresentative(uid), 'No se pudieron cargar tus citas');
+
+  @override
+  Future<List<AppointmentEntity>> getAppointmentsByPatient(String patientId) => _ejecutar(
+      () => remoteDataSource.getAppointmentsByPatient(patientId), 'No se pudo cargar el historial');
+
+  @override
+  Future<String> bookAppointment(AppointmentEntity appointment) => _ejecutar(
+      () => remoteDataSource.bookAppointment(AppointmentModel.fromEntity(appointment)),
+      'No se pudo guardar la cita');
+
+  @override
+  Future<void> cancelAppointment(String appointmentId) =>
+      _ejecutar(() => remoteDataSource.cancelAppointment(appointmentId), 'No se pudo cancelar la cita');
+
+  @override
+  Future<void> rescheduleAppointment(String appointmentId, DateTime nuevaFecha) => _ejecutar(
+      () => remoteDataSource.rescheduleAppointment(appointmentId, nuevaFecha),
+      'No se pudo reprogramar la cita');
+
+  @override
+  Future<void> updateStatus(String appointmentId, CitaStatus status) => _ejecutar(
+      () => remoteDataSource.updateStatus(appointmentId, status), 'No se pudo actualizar el estado');
 }

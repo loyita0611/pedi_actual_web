@@ -1,0 +1,158 @@
+rules_version = '2';
+
+// PediActual - reglas de acceso.
+//
+// Antes de este archivo no habia ninguna regla en el repositorio: si el
+// proyecto quedo en modo prueba, cualquier usuario autenticado podia leer las
+// historias, los telefonos y los pagos de todos los pacientes desde la consola
+// del navegador, y el rol se decidia leyendo un campo que el propio usuario
+// podia escribir.
+//
+// Despliegue:  firebase deploy --only firestore:rules
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------- utilidades
+
+    function autenticado() {
+      return request.auth != null;
+    }
+
+    // El rol de confianza es el custom claim. Mientras no esten configurados,
+    // se cae al documento de usuario, que ya no es escribible por su dueno.
+    function rolClaim() {
+      return request.auth.token.role;
+    }
+
+    function docUsuario() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function rol() {
+      return autenticado()
+        ? (rolClaim() != null
+            ? rolClaim()
+            : (exists(/databases/$(database)/documents/users/$(request.auth.uid))
+                ? docUsuario().role
+                : 'patient'))
+        : '';
+    }
+
+    function esSecretaria() { return rol() == 'secretary'; }
+    function esDoctora()    { return rol() == 'doctor'; }
+    function esPersonal()   { return esSecretaria() || esDoctora(); }
+
+    function esDueno(datos) {
+      return autenticado() && (
+        datos.representativeId == request.auth.uid ||
+        (datos.email is string && datos.email == request.auth.token.email)
+      );
+    }
+
+    // Impide que un campo cambie en un update.
+    function noCambia(campo) {
+      return !(campo in request.resource.data) ||
+             request.resource.data[campo] == resource.data[campo];
+    }
+
+    // ------------------------------------------------------------- usuarios
+
+    match /users/{uid} {
+      allow read: if autenticado() && (request.auth.uid == uid || esPersonal());
+
+      // Al registrarse solo puede crearse a si mismo y solo como paciente.
+      allow create: if autenticado()
+                    && request.auth.uid == uid
+                    && request.resource.data.role == 'patient'
+                    && request.resource.data.uid == uid;
+
+      // Puede editar su perfil pero nunca su propio rol. Esa es la puerta que
+      // permitia auto-ascenderse a secretaria.
+      allow update: if autenticado()
+                    && request.auth.uid == uid
+                    && noCambia('role')
+                    && noCambia('uid');
+
+      allow delete: if false;
+    }
+
+    // ------------------------------------------------------------ pacientes
+
+    match /patients/{patientId} {
+      allow read: if esPersonal() || esDueno(resource.data);
+      allow create: if esPersonal() ||
+                    (autenticado() && request.resource.data.representativeId == request.auth.uid);
+      allow update: if esPersonal() || esDueno(resource.data);
+      allow delete: if esPersonal();
+    }
+
+    // ---------------------------------------------------------------- citas
+
+    match /citas/{citaId} {
+      allow read: if esPersonal() || esDueno(resource.data);
+
+      allow create: if esPersonal() ||
+                    (autenticado() && request.resource.data.representativeId == request.auth.uid);
+
+      // El representante puede cancelar o reprogramar la suya, pero no tocar
+      // el estado del pago ni cambiarle el dueno.
+      allow update: if esPersonal() ||
+                    (esDueno(resource.data)
+                     && noCambia('representativeId')
+                     && noCambia('pagoEstado')
+                     && noCambia('pagoMonto'));
+
+      allow delete: if esPersonal();
+
+      // Indicaciones que la doctora deja para la secretaria.
+      match /ordenes/{ordenId} {
+        function cita() {
+          return get(/databases/$(database)/documents/citas/$(citaId)).data;
+        }
+        allow read: if esPersonal() || esDueno(cita());
+        allow create, delete: if esPersonal();
+        // La secretaria resuelve la orden; solo el personal escribe.
+        allow update: if esPersonal();
+      }
+    }
+
+    // ---------------------------------------------------------------- pagos
+
+    match /pagos/{pagoId} {
+      allow read: if esPersonal() || esDueno(resource.data);
+      allow create: if esPersonal() ||
+                    (autenticado() && request.resource.data.representativeId == request.auth.uid);
+      // Verificar o rechazar un pago es exclusivo del personal.
+      allow update: if esPersonal();
+      allow delete: if esPersonal();
+    }
+
+    // -------------------------------------------------------------- recetas
+
+    match /prescriptions/{docId} {
+      allow read: if esPersonal() || esDueno(resource.data);
+      allow write: if esPersonal();
+    }
+
+    // -------------------------------------------------- configuracion clinica
+
+    match /configuracion/{docId} {
+      allow read: if autenticado();
+      // La tasa de respaldo la escribe cualquier sesion al consultarla.
+      allow write: if esPersonal() || (autenticado() && docId == 'tasa_bcv');
+    }
+
+    // Consulta de grupo de colecciones: la pestana "Indicaciones pendientes"
+    // barre todas las subcolecciones `ordenes` de una sola vez. Firestore exige
+    // una regla propia para collectionGroup, la del padre no la cubre.
+    match /{ruta=**}/ordenes/{ordenId} {
+      allow read: if esPersonal();
+    }
+
+    // Todo lo que no este declarado arriba queda cerrado.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

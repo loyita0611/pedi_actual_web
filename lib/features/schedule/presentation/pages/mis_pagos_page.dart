@@ -1,109 +1,94 @@
 // lib/features/schedule/presentation/pages/mis_pagos_page.dart
-import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../../domain/entities/appointment_entity.dart'; 
-import '../../data/models/appointment_model.dart'; 
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
-class MisPagosPage extends StatefulWidget {
+import '../../../../core/config/clinic_config.dart';
+import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_status.dart';
+import '../../../../core/utils/file_opener.dart';
+import '../../../../core/widgets/async_states.dart';
+import '../../data/models/appointment_model.dart';
+import '../../domain/entities/appointment_entity.dart';
+
+/// Historial de pagos del representante.
+///
+/// Dos arreglos importantes: ya no existe el correo de prueba que estaba
+/// escrito en el codigo (si no habia sesion se consultaban los pagos de otra
+/// persona), y el estado se lee con el mismo vocabulario que escribe la
+/// secretaria, asi que un pago verificado por fin aparece como confirmado.
+class MisPagosPage extends StatelessWidget {
   const MisPagosPage({super.key});
 
   @override
-  State<MisPagosPage> createState() => _MisPagosPageState();
-}
-
-class _MisPagosPageState extends State<MisPagosPage> {
-  // Capturamos el correo electrónico de la sesión activa del representante
-  final String? _currentUserEmail = FirebaseAuth.instance.currentUser?.email;
-
-  @override
   Widget build(BuildContext context) {
-    // Si no hay sesión detectada (entorno de pruebas local), usamos el de tu captura
-    final String emailAConsultar = _currentUserEmail ?? 'jorg@gmail.com';
+    final usuario = FirebaseAuth.instance.currentUser;
+    if (usuario == null) {
+      return const EstadoVacio(
+        icono: Icons.lock_outline,
+        titulo: 'Inicia sesion para ver tus pagos',
+      );
+    }
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF4F7F6),
+      backgroundColor: AppColors.background,
       body: Padding(
-        padding: const EdgeInsets.all(24.0),
+        padding: const EdgeInsets.all(32),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 🔹 ENCABEZADO PRINCIPAL DEL PANEL
-            const Text(
-              'Historial de Transacciones',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF4594A4)),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Consulta el estado de cuenta de tus pagos registrados bajo el correo: $emailAConsultar',
-              style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-            ),
+            const Text('Mis Pagos',
+                style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: AppColors.primary)),
+            const SizedBox(height: 6),
+            const Text('Estado de cada pago que has reportado.',
+                style: TextStyle(fontSize: 14, color: AppColors.textSecondary)),
             const SizedBox(height: 24),
-
-            // 🔹 ESCUCHA EN TIEMPO REAL DESDE LA COLECCIÓN 'CITAS'
             Expanded(
-              child: StreamBuilder<QuerySnapshot>(
+              child: ColeccionView<QuerySnapshot<Map<String, dynamic>>>(
                 stream: FirebaseFirestore.instance
                     .collection('citas')
-                    .where('email', isEqualTo: emailAConsultar)
+                    .where('representativeId', isEqualTo: usuario.uid)
                     .snapshots(),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator(color: Color(0xFF4594A4)));
-                  }
+                estaVacio: (s) => s.docs.isEmpty,
+                vacio: const EstadoVacio(
+                  icono: Icons.account_balance_wallet_outlined,
+                  titulo: 'Sin pagos reportados',
+                  detalle: 'Tus reportes bancarios apareceran aqui al agendar una cita.',
+                ),
+                builder: (context, snap) {
+                  final citas = snap.docs
+                      .map((d) => AppointmentModel.fromJson(d.data(), d.id))
+                      .where((c) => c.pagoMonto != null || c.pagoReferencia != null)
+                      .toList()
+                    ..sort((a, b) => b.appointmentDateTime.compareTo(a.appointmentDateTime));
 
-                  if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                    return _buildEmptyState();
-                  }
-
-                  // Mapeamos los documentos de Firebase a objetos de tipo AppointmentEntity
-                  List<AppointmentEntity> misTransacciones = snapshot.data!.docs.map((doc) {
-                    return AppointmentModel.fromJson(doc.data() as Map<String, dynamic>, doc.id);
-                  }).toList();
-
-                  // Ordenamos cronológicamente: las citas más recientes primero
-                  misTransacciones.sort((a, b) => b.appointmentDateTime.compareTo(a.appointmentDateTime));
-
-                  // Cálculos dinámicos para las tarjetas superiores
-                  int enVerificacion = misTransacciones.where((c) => c.pagoEstado == 'pendiente_verificacion').length;
-                  int confirmados = misTransacciones.where((c) => c.pagoEstado == 'pagado' || c.pagoEstado == 'aprobado').length;
+                  final porVerificar =
+                      citas.where((c) => c.pagoEstado == PagoStatus.pendiente).length;
+                  final verificados =
+                      citas.where((c) => c.pagoEstado == PagoStatus.verificado).length;
+                  final rechazados =
+                      citas.where((c) => c.pagoEstado == PagoStatus.rechazado).length;
 
                   return Column(
                     children: [
-                      // 1. INDICADORES SUPERIORES (KPIs)
-                      _buildSummaryCards(enVerificacion, confirmados),
-                      const SizedBox(height: 24),
-
-                      // 2. TABLA INTERACTIVA DE DATOS
+                      Row(
+                        children: [
+                          _kpi('Por verificar', porVerificar, PagoStatus.pendiente),
+                          const SizedBox(width: 14),
+                          _kpi('Verificados', verificados, PagoStatus.verificado),
+                          if (rechazados > 0) ...[
+                            const SizedBox(width: 14),
+                            _kpi('Rechazados', rechazados, PagoStatus.rechazado),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 22),
                       Expanded(
-                        child: Card(
-                          elevation: 1,
-                          shadowColor: Colors.black.withValues(alpha: 0.05),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          child: Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(16),
-                            child: SingleChildScrollView(
-                              scrollDirection: Axis.vertical,
-                              child: Theme(
-                                data: Theme.of(context).copyWith(dividerColor: Colors.grey[200]),
-                                child: DataTable(
-                                  headingRowColor: WidgetStateProperty.all(const Color(0xFF4594A4).withValues(alpha: 0.04)),
-                                  dataRowMinHeight: 52,
-                                  dataRowMaxHeight: 52,
-                                  columns: const [
-                                    DataColumn(label: Text('Fecha Cita', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF4594A4)))),
-                                    DataColumn(label: Text('Paciente', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF4594A4)))),
-                                    DataColumn(label: Text('Método', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF4594A4)))),
-                                    DataColumn(label: Text('Referencia', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF4594A4)))),
-                                    DataColumn(label: Text('Monto', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF4594A4)))),
-                                    DataColumn(label: Text('Estatus Pago', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF4594A4)))),
-                                  ],
-                                  rows: misTransacciones.map((cita) => _buildDataRow(cita)).toList(),
-                                ),
-                              ),
-                            ),
-                          ),
+                        child: ListView.separated(
+                          itemCount: citas.length,
+                          separatorBuilder: (_, __) => const SizedBox(height: 10),
+                          itemBuilder: (context, i) => _FilaPago(cita: citas[i]),
                         ),
                       ),
                     ],
@@ -117,156 +102,133 @@ class _MisPagosPageState extends State<MisPagosPage> {
     );
   }
 
-  // WIDGET: Constructor de las tarjetas superiores de estatus
-  Widget _buildSummaryCards(int pendientes, int aprobados) {
-    return Row(
-      children: [
-        _buildKPICard(
-          title: 'Pagos por Verificar',
-          value: '$pendientes',
-          icon: Icons.history_toggle_off_rounded,
-          color: Colors.amber[700]!,
-          backgroundColor: Colors.amber[50]!,
-        ),
-        const SizedBox(width: 16),
-        _buildKPICard(
-          title: 'Pagos Confirmados',
-          value: '$aprobados',
-          icon: Icons.check_circle_rounded,
-          color: Colors.green[700]!,
-          backgroundColor: Colors.green[50]!,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildKPICard({
-    required String title,
-    required String value,
-    required IconData icon,
-    required Color color,
-    required Color backgroundColor,
-  }) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: backgroundColor,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: color.withValues(alpha: 0.2)),
-        ),
-        child: Row(
-          children: [
-            CircleAvatar(
-              backgroundColor: color.withValues(alpha: 0.1),
-              radius: 24,
-              child: Icon(icon, size: 28, color: color),
-            ),
-            const SizedBox(width: 16),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(title, style: TextStyle(fontSize: 13, color: Colors.grey[700], fontWeight: FontWeight.w500)),
-                const SizedBox(height: 2),
-                Text(value, style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: color)),
-              ],
-            )
-          ],
-        ),
-      ),
-    );
-  }
-
-  // WIDGET: Mapeo y renderizado de la fila de la tabla
-  DataRow _buildDataRow(AppointmentEntity cita) {
-    final fechaStr = "${cita.appointmentDateTime.day}/${cita.appointmentDateTime.month}/${cita.appointmentDateTime.year}";
-    
-    return DataRow(cells: [
-      DataCell(Text(fechaStr, style: const TextStyle(fontWeight: FontWeight.w500))),
-      DataCell(Text(cita.patientName)),
-      DataCell(Text(cita.pagoMetodo ?? 'Pago Móvil')),
-      DataCell(Text(cita.pagoReferencia ?? 'N/A')),
-      DataCell(Text(cita.pagoMonto != null ? "${cita.pagoMonto!.toStringAsFixed(2)} Bs." : '0.00 Bs.')),
-      DataCell(_buildStatusBadge(cita)), // Enlace directo pasando la cita completa
-    ]);
-  }
-
-  // WIDGET: Badge ovalado de estatus con botón condicional para reclamos
-  Widget _buildStatusBadge(AppointmentEntity cita) {
-    final estado = cita.pagoEstado ?? 'pendiente_verificacion';
-    
-    Color bgColor;
-    Color textColor;
-    String label;
-
-    switch (estado) {
-      case 'pagado':
-      case 'aprobado':
-        bgColor = Colors.green[50]!;
-        textColor = Colors.green[700]!;
-        label = 'Confirmado';
-        break;
-      case 'rechazado':
-        bgColor = Colors.red[50]!;
-        textColor = Colors.red[700]!;
-        label = 'Rechazado';
-        break;
-      default:
-        bgColor = Colors.amber[50]!;
-        textColor = Colors.amber[700]!;
-        label = 'Por Verificar';
-    }
-
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+  Widget _kpi(String titulo, int valor, PagoStatus estado) => Expanded(
+        child: Container(
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: bgColor,
-            borderRadius: BorderRadius.circular(20),
+            color: estado.background,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: estado.color.withValues(alpha: 0.25)),
           ),
-          child: Text(
-            label,
-            style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 11),
+          child: Row(
+            children: [
+              Text('$valor',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: estado.color)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(titulo,
+                    style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+              ),
+            ],
           ),
         ),
-        // 🚀 ACCIÓN RECHAZADO: El botón de consulta médica/soporte solo nace si el estado es 'rechazado'
-        if (estado == 'rechazado') ...[
-          const SizedBox(width: 8),
-          IconButton(
-            icon: const Icon(Icons.chat_bubble_outline_rounded, color: Colors.redAccent, size: 18),
-            tooltip: 'Consultar motivo del rechazo',
-            onPressed: () {
-              // Preparación del string base para el canal de soporte (WhatsApp/Email)
-              final mensajeSoporte = "Hola PediActual, tengo una duda con el pago rechazado del paciente ${cita.patientName}. Referencia: ${cita.pagoReferencia}.";
-              debugPrint(mensajeSoporte); // Imprime el log del reclamo en la terminal de VS Code
-              
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Abriendo consulta para el paciente: ${cita.patientName}'),
-                  backgroundColor: Colors.redAccent,
-                ),
-              );
-            },
-          ),
-        ],
-      ],
-    );
-  }
+      );
+}
 
-  // WIDGET: Vista amigable por si la base de datos está vacía para este correo
-  Widget _buildEmptyState() {
-    return Center(
+class _FilaPago extends StatelessWidget {
+  const _FilaPago({required this.cita});
+  final AppointmentEntity cita;
+
+  @override
+  Widget build(BuildContext context) {
+    final rechazado = cita.pagoEstado == PagoStatus.rechazado;
+    final telefono = ClinicConfigService.actual.telefonoClinica;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: rechazado ? AppColors.danger.withValues(alpha: 0.4) : AppColors.border),
+      ),
+      padding: const EdgeInsets.all(16),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.account_balance_wallet_outlined, size: 64, color: Colors.grey[300]),
-          const SizedBox(height: 16),
-          const Text('Sin transacciones reportadas', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey)),
-          const SizedBox(height: 4),
-          const Text('Tus reportes bancarios se reflejarán aquí al agendar una cita.', style: TextStyle(fontSize: 13, color: Colors.grey)),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(cita.patientName.isEmpty ? 'Sin nombre' : cita.patientName,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                    const SizedBox(height: 3),
+                    Text(
+                      [
+                        'Cita del ${DateFormat('d/MM/y').format(cita.appointmentDateTime)}',
+                        cita.pagoMetodo ?? 'Pago movil',
+                        if ((cita.pagoBanco ?? '').isNotEmpty) cita.pagoBanco!,
+                        if ((cita.pagoReferencia ?? '').isNotEmpty) 'Ref. ${cita.pagoReferencia}',
+                      ].join('  ·  '),
+                      style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    cita.pagoMonto == null
+                        ? '-'
+                        : '${cita.pagoMonto!.toStringAsFixed(2)} Bs.',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                  ),
+                  const SizedBox(height: 6),
+                  StatusPill.pago(cita.pagoEstado, dense: true),
+                ],
+              ),
+            ],
+          ),
+          if (cita.tieneComprobante) ...[
+            const SizedBox(height: 10),
+            InkWell(
+              onTap: () => abrirArchivo(context, cita.pagoComprobanteUrl),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.image_outlined, size: 15, color: AppColors.primary),
+                  SizedBox(width: 6),
+                  Text('Ver mi comprobante',
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          color: AppColors.primaryDark,
+                          decoration: TextDecoration.underline)),
+                ],
+              ),
+            ),
+          ],
+          if (rechazado) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.dangerSoft,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Por que se rechazo',
+                      style: TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.danger)),
+                  const SizedBox(height: 4),
+                  // El motivo real, escrito por la secretaria. Antes el boton de
+                  // "consultar el motivo" solo imprimia un texto en la consola.
+                  Text(
+                    (cita.pagoMotivoRechazo ?? '').isEmpty
+                        ? 'La clinica no registro un motivo. Comunicate al $telefono.'
+                        : cita.pagoMotivoRechazo!,
+                    style: const TextStyle(fontSize: 13, color: AppColors.textPrimary),
+                  ),
+                  const SizedBox(height: 8),
+                  Text('Puedes reportar el pago de nuevo o llamar al $telefono.',
+                      style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );

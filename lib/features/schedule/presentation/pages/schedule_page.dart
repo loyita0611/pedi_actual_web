@@ -1,101 +1,106 @@
 // lib/features/schedule/presentation/pages/schedule_page.dart
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../domain/entities/appointment_entity.dart'; 
-import 'package:pedia_actual/features/schedule/presentation/widgets/time_slots_grid.dart';
+import 'package:intl/intl.dart';
+
+import '../../../../core/config/clinic_config.dart';
+import '../../../../core/constants/app_colors.dart';
+import '../../../../core/services/email_service.dart';
+import '../../../../core/widgets/async_states.dart';
+import '../../../../injection_container.dart' as di;
+import '../../domain/entities/appointment_entity.dart';
 import '../bloc/schedule_bloc.dart';
-import '../bloc/schedule_state.dart';
 import '../bloc/schedule_event.dart';
-import '../widgets/schedule_calendar.dart';
-import '../widgets/daily_appointments_list.dart';
+import '../bloc/schedule_state.dart';
 import '../widgets/booking_dialog.dart';
+import '../widgets/daily_appointments_list.dart';
+import '../widgets/schedule_calendar.dart';
+import '../widgets/time_slots_grid.dart';
 
 class SchedulePage extends StatefulWidget {
-  const SchedulePage({super.key});
+  const SchedulePage({super.key, this.esPersonal = false});
+
+  /// Secretaria y doctora ven los nombres de los pacientes; el representante no.
+  final bool esPersonal;
 
   @override
   State<SchedulePage> createState() => _SchedulePageState();
 }
 
 class _SchedulePageState extends State<SchedulePage> {
-  DateTime _focusedDay = DateTime.now();
+  DateTime _dia = DateTime.now();
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppColors.background,
       body: BlocConsumer<ScheduleBloc, ScheduleState>(
         listener: (context, state) {
-          if (state is AppointmentBookingInProgress) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Guardando cita médica en la base de datos...'),
-                duration: Duration(seconds: 1),
-              ),
-            );
+          if (state is ScheduleLoaded && state.mensajeExito != null) {
+            mostrarAviso(context, state.mensajeExito!, esExito: true);
+            _dia = state.selectedDate;
           }
-          if (state is AppointmentBookedSuccess) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('¡Cita registrada con éxito!'),
-                backgroundColor: Colors.green,
-              ),
-            );
-            // 🔄 Forzar recarga automática del día para que los botones cambien de color al instante
-            context.read<ScheduleBloc>().add(LoadAppointmentsForDate(_focusedDay));
+          if (state is ScheduleError) {
+            mostrarAviso(context, state.message, esError: true);
           }
         },
         builder: (context, state) {
           if (state is ScheduleInitial) {
-            context.read<ScheduleBloc>().add(LoadAppointmentsForDate(_focusedDay));
-            return const Center(child: CircularProgressIndicator());
+            context.read<ScheduleBloc>().add(LoadAppointmentsForDate(_dia));
+            return const CargandoCentrado();
           }
-          if (state is ScheduleLoading) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (state is ScheduleError) {
-            return Center(child: Text('Error: ${state.message}'));
-          }
-          if (state is ScheduleLoaded) {
-            return LayoutBuilder(
-              builder: (context, constraints) {
-                if (constraints.maxWidth > 800) {
-                  return _buildDesktopLayout(state);
-                } else {
-                  return _buildMobileLayout(state);
-                }
-              },
+          if (state is ScheduleWorking) return CargandoCentrado(mensaje: state.mensaje);
+          if (state is ScheduleLoading) return const CargandoCentrado();
+
+          // Un error ya no deja la pantalla en blanco con un volcado tecnico:
+          // se vuelve a pintar la grilla anterior y el aviso sale arriba.
+          final cargado = state is ScheduleLoaded
+              ? state
+              : state is ScheduleError
+                  ? state.previo
+                  : null;
+
+          if (cargado == null) {
+            return EstadoError(
+              error: state is ScheduleError ? state.message : 'No se pudo cargar la agenda',
+              onReintentar: () => context.read<ScheduleBloc>().add(LoadAppointmentsForDate(_dia)),
             );
           }
-          return const Center(child: CircularProgressIndicator());
+
+          return LayoutBuilder(
+            builder: (context, c) =>
+                c.maxWidth > 880 ? _escritorio(cargado) : _movil(cargado),
+          );
         },
       ),
     );
   }
 
-  Widget _buildDesktopLayout(ScheduleLoaded state) {
+  Widget _escritorio(ScheduleLoaded state) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
-          width: 320,
+          width: 330,
           child: Column(
             children: [
               Card(
                 margin: const EdgeInsets.all(16),
                 child: Padding(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(12),
                   child: ScheduleCalendar(
-                    focusedDay: _focusedDay,
-                    onDaySelected: _onDaySelected,
+                    focusedDay: _dia,
+                    permitirPasado: widget.esPersonal,
+                    onDaySelected: _cambiarDia,
                   ),
                 ),
               ),
               Expanded(
                 child: DailyAppointmentsList(
                   appointments: state.appointments,
-                  onRefresh: () {
-                    context.read<ScheduleBloc>().add(LoadAppointmentsForDate(state.selectedDate));
-                  },
+                  esPersonal: widget.esPersonal,
                 ),
               ),
             ],
@@ -103,23 +108,13 @@ class _SchedulePageState extends State<SchedulePage> {
         ),
         Expanded(
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(20),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Horarios para el ${state.selectedDate.day}/${state.selectedDate.month}/${state.selectedDate.year}',
-                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.teal),
-                ),
+                _encabezado(state.selectedDate),
                 const SizedBox(height: 16),
-                Expanded(
-                  child: TimeSlotsGrid(
-                    selectedDate: state.selectedDate,
-                    appointments: state.appointments,
-                    crossAxisCount: 4,
-                    onSlotSelected: _openBookingDialog,
-                  ),
-                ),
+                Expanded(child: _grilla(state, 4)),
               ],
             ),
           ),
@@ -128,90 +123,145 @@ class _SchedulePageState extends State<SchedulePage> {
     );
   }
 
-  Widget _buildMobileLayout(ScheduleLoaded state) {
+  Widget _movil(ScheduleLoaded state) {
     return SingleChildScrollView(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ScheduleCalendar(
-              focusedDay: _focusedDay,
-              onDaySelected: _onDaySelected,
-            ),
-            const SizedBox(height: 24),
-            const Text(
-              'Horarios disponibles:',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              height: 400,
-              child: TimeSlotsGrid(
-                selectedDate: state.selectedDate,
-                appointments: state.appointments,
-                crossAxisCount: 2,
-                onSlotSelected: _openBookingDialog,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: ScheduleCalendar(
+                focusedDay: _dia,
+                permitirPasado: widget.esPersonal,
+                onDaySelected: _cambiarDia,
               ),
             ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 20),
+          _encabezado(state.selectedDate),
+          const SizedBox(height: 14),
+          SizedBox(height: 420, child: _grilla(state, 2)),
+          const SizedBox(height: 20),
+          SizedBox(
+            height: 300,
+            child: DailyAppointmentsList(
+              appointments: state.appointments,
+              esPersonal: widget.esPersonal,
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  void _onDaySelected(DateTime selectedDay) {
-    setState(() {
-      _focusedDay = selectedDay;
-    });
-    context.read<ScheduleBloc>().add(LoadAppointmentsForDate(selectedDay));
+  Widget _encabezado(DateTime dia) {
+    final libres = ClinicConfigService.actual.esDiaHabil(dia);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          DateFormat("EEEE d 'de' MMMM 'de' y", 'es').format(dia),
+          style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold, color: AppColors.primary),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          libres ? 'Elige un horario disponible para agendar.' : 'La consulta no atiende este dia.',
+          style: const TextStyle(fontSize: 13.5, color: AppColors.textSecondary),
+        ),
+      ],
+    );
   }
 
-  // 🚀 MÉTODO OPTIMIZADO Y REPARADO PARA SOPORTAR NUEVAS CITAS Y EDICIONES
-  void _openBookingDialog(String timeString, DateTime appointmentDateTime) async {
-    AppointmentEntity? appointmentParaEditar;
-    final state = context.read<ScheduleBloc>().state;
+  Widget _grilla(ScheduleLoaded state, int columnas) => TimeSlotsGrid(
+        selectedDate: state.selectedDate,
+        appointments: state.appointments,
+        crossAxisCount: columnas,
+        exponerDatosDelPaciente: widget.esPersonal,
+        onSlotSelected: _abrirReserva,
+      );
 
-    if (state is ScheduleLoaded) {
-      // Buscamos si coincide con alguna cita guardada en el arreglo local
-      for (var app in state.appointments) {
-        if (app.appointmentDateTime.year == appointmentDateTime.year &&
-            app.appointmentDateTime.month == appointmentDateTime.month &&
-            app.appointmentDateTime.day == appointmentDateTime.day &&
-            app.appointmentDateTime.hour == appointmentDateTime.hour &&
-            app.appointmentDateTime.minute == appointmentDateTime.minute) {
-          appointmentParaEditar = app;
-          break;
-        }
-      }
-    }
+  void _cambiarDia(DateTime dia) {
+    setState(() => _dia = dia);
+    context.read<ScheduleBloc>().add(LoadAppointmentsForDate(dia));
+  }
 
-    // Si es una hora libre, le pasamos una entidad inicializada limpia pero con la fecha/hora seleccionada
-    appointmentParaEditar ??= AppointmentEntity(
-      id: '',
-      patientName: '',
-      patientBirthDate: DateTime.now().subtract(const Duration(days: 365)),
-      address: '',
-      phone:'',
-      representativeName: '',
-      email: '',
-      appointmentDateTime: appointmentDateTime, // Arrastra la hora correcta cliqueada
-      status: 'pending',
-    );
+  Future<void> _abrirReserva(String hora, DateTime cuando) async {
+    final bloc = context.read<ScheduleBloc>();
 
     await showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) {
-        return BookingDialog(
-          appointment: appointmentParaEditar, 
-          timeString: timeString,
-          appointmentDateTime: appointmentDateTime,
-          onConfirmBooking: (updatedAppointment) {
-            context.read<ScheduleBloc>().add(BookNewAppointment(updatedAppointment));
-          },
-        );
-      },
+      builder: (_) => BookingDialog(
+        timeString: hora,
+        appointmentDateTime: cuando,
+        onConfirmBooking: (cita) => _guardar(bloc, cita, hora),
+      ),
     );
+  }
+
+  /// Cuanto se espera al bloc antes de dar la reserva por perdida.
+  ///
+  /// Firestore no lanza error cuando no hay red: encola la escritura y deja la
+  /// promesa esperando, asi que sin este limite el bloc no emite nunca y el
+  /// dialogo se queda en "Guardando..." para siempre.
+  static const Duration _limiteReserva = Duration(seconds: 45);
+
+  /// Devuelve true solo si Firestore confirmo el guardado, y lanza con el
+  /// motivo cuando no. El correo se manda despues, nunca antes: asi el
+  /// representante no recibe la confirmacion de una cita que no llego a
+  /// existir.
+  Future<bool> _guardar(ScheduleBloc bloc, AppointmentEntity cita, String hora) async {
+    if (bloc.isClosed) {
+      throw const ReservaFallida(
+        'La agenda se cerro antes de guardar. Vuelve a abrir el horario.',
+      );
+    }
+
+    // La suscripcion se abre antes de despachar el evento: al reves habria una
+    // ventana en la que el bloc ya emitio y este future se queda esperando.
+    final espera = bloc.stream
+        .firstWhere((s) => s is ScheduleLoaded || s is ScheduleError)
+        .timeout(_limiteReserva);
+
+    bloc.add(BookNewAppointment(cita));
+
+    final ScheduleState resultado;
+    try {
+      resultado = await espera;
+    } on TimeoutException {
+      throw const ReservaFallida(
+        'El servidor no respondio a tiempo. Revisa tu conexion y confirma en '
+        '"Mis citas" si la reserva quedo hecha antes de volver a intentarlo.',
+      );
+    } on StateError {
+      // El bloc se cerro sin emitir (la pantalla se desmonto a mitad).
+      throw const ReservaFallida(
+        'La agenda se cerro antes de terminar de guardar. Vuelve a intentarlo.',
+      );
+    }
+
+    // El motivo viaja hasta el dialogo: el SnackBar del listener sale por
+    // detras de la barrera modal y el representante no lo ve.
+    if (resultado is ScheduleError) {
+      throw ReservaFallida(resultado.message);
+    }
+
+    // El correo no decide si la cita quedo guardada. Antes se esperaba aqui, y
+    // un fallo del proveedor convertia una reserva buena en un error en
+    // pantalla, con el riesgo de que el representante agendara dos veces.
+    if (cita.email.isNotEmpty) {
+      unawaited(
+        di.sl<EmailService>().confirmacionCita(
+          correo: cita.email,
+          paciente: cita.patientName,
+          fecha: DateFormat('d/MM/y').format(cita.appointmentDateTime),
+          hora: hora,
+          telefonoClinica: ClinicConfigService.actual.telefonoClinica,
+        ),
+      );
+    }
+    return true;
   }
 }
