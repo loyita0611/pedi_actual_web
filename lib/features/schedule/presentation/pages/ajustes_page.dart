@@ -20,7 +20,7 @@ class AjustesPage extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Configuracion',
+            const Text('Configuración',
                 style: TextStyle(
                     fontSize: 26,
                     fontWeight: FontWeight.bold,

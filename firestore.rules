@@ -43,10 +43,19 @@ service cloud.firestore {
     function esDoctora()    { return rol() == 'doctor'; }
     function esPersonal()   { return esSecretaria() || esDoctora(); }
 
+    // El dueno se identifica por su uid, que nadie puede falsificar.
+    //
+    // La coincidencia por correo se conserva solo para los pacientes que la
+    // secretaria cargo antes de que el representante se registrara, pero ahora
+    // exige que el correo este verificado. Sin esa condicion bastaba con
+    // registrarse usando el correo de otra familia -Firebase no lo comprueba-
+    // para leer y modificar la historia clinica de sus hijos.
     function esDueno(datos) {
       return autenticado() && (
         datos.representativeId == request.auth.uid ||
-        (datos.email is string && datos.email == request.auth.token.email)
+        (datos.email is string
+         && datos.email == request.auth.token.email
+         && request.auth.token.email_verified == true)
       );
     }
 
@@ -90,7 +99,19 @@ service cloud.firestore {
     // ---------------------------------------------------------------- citas
 
     match /citas/{citaId} {
-      allow read: if esPersonal() || esDueno(resource.data);
+      // Leer una cita suelta: el personal siempre, el representante la suya, y
+      // cualquiera un documento que no existe. Esa ultima parte no filtra nada
+      // -no hay dato que devolver- y es lo que permite que la transaccion de
+      // reserva compruebe si el horario esta libre sin abrir la coleccion.
+      allow get: if esPersonal() || resource == null || esDueno(resource.data);
+
+      // El representante solo puede listar las suyas: la consulta de "Mis
+      // citas" filtra por representativeId, asi que cada documento devuelto
+      // cumple la condicion. Una consulta por rango de fechas traeria citas
+      // ajenas y Firestore la rechaza entera; por eso la grilla ya no las
+      // pide y lee `disponibilidad/{fecha}`, que solo trae las horas tomadas.
+      allow list: if esPersonal()
+                  || resource.data.representativeId == request.auth.uid;
 
       allow create: if esPersonal() ||
                     (autenticado() && request.resource.data.representativeId == request.auth.uid);
@@ -135,12 +156,44 @@ service cloud.firestore {
       allow write: if esPersonal();
     }
 
+    // ---------------------------------------------------------- recordatorios
+    // Los testigos de los enlaces del correo. Cerrados al cliente: si se
+    // pudieran listar, cualquiera podria confirmar o cancelar citas ajenas.
+    // Solo los escribe y los lee la funcion que manda los recordatorios.
+    match /recordatorios/{testigo} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------- codigos por correo
+    // Los codigos de verificacion los escribe y los lee unicamente el
+    // servidor. Cerrado por completo al cliente: si se pudieran leer, el
+    // codigo dejaria de probar que la persona tiene acceso a ese correo.
+    // Ademas solo se guarda el resumen del codigo, no el codigo.
+    match /codigos/{docId} {
+      allow read, write: if false;
+    }
+
+    // ------------------------------------------------------- disponibilidad
+    // Que horarios estan tomados cada dia, sin un solo dato del paciente.
+    // La escribe unicamente la funcion `sincronizarDisponibilidad` con el SDK
+    // de administrador, que no pasa por estas reglas.
+    match /disponibilidad/{fecha} {
+      allow read: if autenticado();
+      allow write: if false;
+    }
+
     // -------------------------------------------------- configuracion clinica
 
     match /configuracion/{docId} {
       allow read: if autenticado();
-      // La tasa de respaldo la escribe cualquier sesion al consultarla.
-      allow write: if esPersonal() || (autenticado() && docId == 'tasa_bcv');
+
+      // Solo el personal escribe. Antes cualquier sesion podia reescribir
+      // `tasa_bcv`, que es lo que convierte la tarifa en dolares a bolivares:
+      // poniendo una tasa de 1 el total a pagar caia de mas de un millon de
+      // bolivares a cuarenta, con el comprobante en regla. El respaldo lo
+      // refrescan las sesiones del personal, y su escritura ya falla en
+      // silencio cuando no hay permiso.
+      allow write: if esPersonal();
     }
 
     // Consulta de grupo de colecciones: la pestana "Indicaciones pendientes"

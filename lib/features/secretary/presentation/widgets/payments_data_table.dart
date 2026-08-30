@@ -6,9 +6,6 @@ import 'package:intl/intl.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_status.dart';
 import '../../../../core/widgets/async_states.dart';
-import '../../../../injection_container.dart' as di;
-import '../../../../core/services/email_service.dart';
-import '../../../../core/config/clinic_config.dart';
 import 'payment_receipt_viewer.dart';
 
 /// Verificacion de pagos.
@@ -34,16 +31,7 @@ class _PaymentsDataTableState extends State<PaymentsDataTable> {
     setState(() => _procesando = pagoId);
     try {
       await _actualizar(pagoId, pago, PagoStatus.verificado, null);
-      final correo = (pago['email'] ?? '').toString();
-      if (correo.isNotEmpty) {
-        await di.sl<EmailService>().pagoVerificado(
-              correo: correo,
-              paciente: (pago['patientName'] ?? '').toString(),
-              fecha: DateFormat('d/MM/y').format(DateTime.now()),
-              hora: '',
-              telefonoClinica: ClinicConfigService.actual.telefonoClinica,
-            );
-      }
+      // El correo lo manda el servidor al ver el cambio en Firestore.
       if (mounted) mostrarAviso(context, 'Pago verificado. El representante ya lo ve confirmado.', esExito: true);
     } catch (e) {
       if (mounted) mostrarAviso(context, 'No se pudo verificar: $e', esError: true);
@@ -61,15 +49,7 @@ class _PaymentsDataTableState extends State<PaymentsDataTable> {
     setState(() => _procesando = pagoId);
     try {
       await _actualizar(pagoId, pago, PagoStatus.rechazado, motivo);
-      final correo = (pago['email'] ?? '').toString();
-      if (correo.isNotEmpty) {
-        await di.sl<EmailService>().pagoRechazado(
-              correo: correo,
-              paciente: (pago['patientName'] ?? '').toString(),
-              motivo: motivo,
-              telefonoClinica: ClinicConfigService.actual.telefonoClinica,
-            );
-      }
+      // El correo lo manda el servidor al ver el cambio en Firestore.
       if (mounted) mostrarAviso(context, 'Pago rechazado. Se le informo el motivo al representante.');
     } catch (e) {
       if (mounted) mostrarAviso(context, 'No se pudo rechazar: $e', esError: true);
@@ -257,6 +237,82 @@ class _PaymentsDataTableState extends State<PaymentsDataTable> {
     );
   }
 
+  /// Todo lo que el representante registro al reportar el pago.
+  Future<void> _verDatos(Map<String, dynamic> d) async {
+    String texto(String clave) {
+      final v = d[clave];
+      if (v == null || v.toString().trim().isEmpty) {
+        return '-';
+      }
+      return v.toString();
+    }
+
+    String monto(String clave) {
+      final v = (d[clave] as num?)?.toDouble();
+      return v == null ? '-' : '${v.toStringAsFixed(2)} Bs.';
+    }
+
+    final fecha = d['date'] is Timestamp ? (d['date'] as Timestamp).toDate() : null;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Text('Datos del pago reportado', style: TextStyle(fontSize: 17)),
+        content: SizedBox(
+          width: 420,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _dato('Paciente', texto('patientName')),
+                _dato('Representante', texto('representativeName')),
+                _dato('Correo', texto('email')),
+                const Divider(height: 22),
+                _dato('Metodo', texto('pagoMetodo')),
+                _dato('Banco emisor', texto('pagoBanco')),
+                _dato('Referencia', texto('pagoReferencia')),
+                _dato('Cedula del emisor', texto('pagoCedula')),
+                _dato('Telefono del emisor', texto('pagoTelefono')),
+                const Divider(height: 22),
+                _dato('Monto reportado', monto('pagoMonto')),
+                _dato('Monto esperado', monto('pagoMontoEsperado')),
+                _dato('Tasa BCV usada', texto('pagoTasaBcv')),
+                _dato('Reportado el',
+                    fecha == null ? '-' : DateFormat("d/MM/y 'a las' h:mm a").format(fecha)),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _dato(String etiqueta, String valor) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 150,
+              child: Text(etiqueta,
+                  style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary)),
+            ),
+            Expanded(
+              child: SelectableText(valor,
+                  style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
+            ),
+          ],
+        ),
+      );
+
   DataRow _fila(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
     final d = doc.data();
     final fecha = d['date'] is Timestamp ? (d['date'] as Timestamp).toDate() : null;
@@ -290,9 +346,14 @@ class _PaymentsDataTableState extends State<PaymentsDataTable> {
         ),
       ),
       DataCell(
-        url.isEmpty
-            ? const Text('Sin captura', style: TextStyle(fontSize: 12, color: AppColors.textMuted))
-            : TextButton.icon(
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (url.isEmpty)
+              const Text('Sin captura',
+                  style: TextStyle(fontSize: 12, color: AppColors.textMuted))
+            else
+              TextButton.icon(
                 onPressed: () => PaymentReceiptViewer.mostrar(
                   context,
                   url: url,
@@ -302,6 +363,16 @@ class _PaymentsDataTableState extends State<PaymentsDataTable> {
                 icon: const Icon(Icons.image_outlined, size: 17),
                 label: const Text('Ver captura', style: TextStyle(fontSize: 12.5)),
               ),
+            // La captura sola no alcanza para verificar: la secretaria necesita
+            // ver la referencia, el banco y la cedula tal como los escribio el
+            // representante, para cotejarlos con el estado de cuenta.
+            TextButton.icon(
+              onPressed: () => _verDatos(d),
+              icon: const Icon(Icons.receipt_long_outlined, size: 17),
+              label: const Text('Ver datos', style: TextStyle(fontSize: 12.5)),
+            ),
+          ],
+        ),
       ),
       DataCell(
         ocupado

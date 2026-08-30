@@ -38,7 +38,8 @@ class PediActualApp extends StatelessWidget {
       title: 'PediActual',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
-      builder: (context, child) => InactivityWrapper(child: child ?? const SizedBox.shrink()),
+      builder: (context, child) =>
+          InactivityWrapper(child: child ?? const SizedBox.shrink()),
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
@@ -60,14 +61,18 @@ class _Puerta extends StatelessWidget {
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, sesion) {
-        if (sesion.connectionState == ConnectionState.waiting) return const _Cargando();
+        if (sesion.connectionState == ConnectionState.waiting) {
+          return const _Cargando();
+        }
         final usuario = sesion.data;
         if (usuario == null) return const LoginPage();
 
         return FutureBuilder<CurrentUser>(
           future: resolverUsuario(usuario),
           builder: (context, perfil) {
-            if (perfil.connectionState == ConnectionState.waiting) return const _Cargando();
+            if (perfil.connectionState == ConnectionState.waiting) {
+              return const _Cargando();
+            }
             if (perfil.hasError) {
               return Scaffold(
                 backgroundColor: AppColors.background,
@@ -105,10 +110,15 @@ Future<CurrentUser> resolverUsuario(User usuario) async {
   try {
     // Lectura directa por id: el documento se crea con el uid como id, asi que
     // la consulta con where() que habia antes era un rodeo innecesario.
-    final doc = await FirebaseFirestore.instance.collection('users').doc(usuario.uid).get();
+    final doc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(usuario.uid)
+        .get();
     final datos = doc.data();
     if (datos != null) {
-      nombre = (datos['name'] as String?)?.trim().isNotEmpty == true ? datos['name'] : nombre;
+      nombre = (datos['name'] as String?)?.trim().isNotEmpty == true
+          ? datos['name']
+          : nombre;
       if (rol == UserRole.patient) rol = _rolDesde(datos['role']?.toString());
     }
   } catch (_) {

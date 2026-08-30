@@ -154,7 +154,7 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                       ),
                       validator: (v) => (v == null || v.isEmpty)
-                          ? 'Ingresa tu contrasena'
+                          ? 'Ingresa tu contraseña'
                           : null,
                     ),
                     Align(
@@ -177,7 +177,7 @@ class _LoginPageState extends State<LoginPage> {
                                 height: 20,
                                 child: CircularProgressIndicator(
                                     color: Colors.white, strokeWidth: 2.4))
-                            : const Text('Iniciar sesion',
+                            : const Text('Iniciar sesión',
                                 style: TextStyle(fontSize: 15)),
                       ),
                     ),

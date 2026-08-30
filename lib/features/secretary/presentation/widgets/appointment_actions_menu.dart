@@ -2,10 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
-import '../../../../core/config/clinic_config.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_status.dart';
-import '../../../../core/services/email_service.dart';
 import '../../../../core/widgets/async_states.dart';
 import '../../../../injection_container.dart' as di;
 import '../../../schedule/domain/entities/appointment_entity.dart';
@@ -40,15 +38,7 @@ class AppointmentActionsMenu extends StatelessWidget {
 
     try {
       await di.sl<AppointmentRepository>().rescheduleAppointment(cita.id, nueva);
-      if (cita.email.isNotEmpty) {
-        await di.sl<EmailService>().reprogramacion(
-              correo: cita.email,
-              paciente: cita.patientName,
-              fecha: DateFormat('d/MM/y').format(nueva),
-              hora: DateFormat('h:mm a').format(nueva),
-              telefonoClinica: ClinicConfigService.actual.telefonoClinica,
-            );
-      }
+      // El correo lo manda el servidor al ver el cambio en Firestore.
       if (context.mounted) {
         mostrarAviso(
           context,
@@ -85,15 +75,7 @@ class AppointmentActionsMenu extends StatelessWidget {
 
     try {
       await di.sl<AppointmentRepository>().cancelAppointment(cita.id);
-      if (cita.email.isNotEmpty) {
-        await di.sl<EmailService>().cancelacion(
-              correo: cita.email,
-              paciente: cita.patientName,
-              fecha: DateFormat('d/MM/y').format(cita.appointmentDateTime),
-              hora: DateFormat('h:mm a').format(cita.appointmentDateTime),
-              telefonoClinica: ClinicConfigService.actual.telefonoClinica,
-            );
-      }
+      // El correo lo manda el servidor al ver el cambio en Firestore.
       if (context.mounted) mostrarAviso(context, 'Cita cancelada.');
     } catch (e) {
       if (context.mounted) mostrarAviso(context, 'No se pudo cancelar: $e', esError: true);

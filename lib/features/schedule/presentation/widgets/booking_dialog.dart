@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../../../../core/config/clinic_config.dart';
@@ -111,6 +112,10 @@ class _BookingDialogState extends State<BookingDialog> {
 
   final String? _uid = FirebaseAuth.instance.currentUser?.uid;
   ClinicConfig get _config => ClinicConfigService.actual;
+
+  /// En efectivo se paga en el consultorio: no hay referencia que registrar ni
+  /// captura que adjuntar, asi que el paso 3 solo confirma.
+  bool get _esEfectivo => _metodo == MetodoPago.efectivo;
 
   @override
   void initState() {
@@ -295,7 +300,7 @@ class _BookingDialogState extends State<BookingDialog> {
       return;
     }
 
-    if (_comprobante == null && (_comprobanteUrl ?? '').isEmpty) {
+    if (!_esEfectivo && _comprobante == null && (_comprobanteUrl ?? '').isEmpty) {
       mostrarAviso(context, 'Adjunta el comprobante del pago para continuar.',
           esError: true);
       return;
@@ -320,7 +325,10 @@ class _BookingDialogState extends State<BookingDialog> {
       _guardando = true;
       _errorEnvio = null;
       _progreso = null;
-      _fase = 'Subiendo el comprobante...';
+      // En efectivo no hay nada que subir: se entra directo a la cita.
+      _fase = _comprobante == null
+          ? 'Agendando tu cita...'
+          : 'Subiendo los datos del comprobante...';
     });
 
     var cerrado = false;
@@ -332,7 +340,7 @@ class _BookingDialogState extends State<BookingDialog> {
         return;
       }
       setState(() {
-        _fase = 'Guardando tu cita...';
+        _fase = 'Agendando tu cita...';
         _progreso = null;
       });
 
@@ -553,7 +561,7 @@ class _BookingDialogState extends State<BookingDialog> {
           ),
           const SizedBox(height: 16),
           Text(
-            _fase.isEmpty ? 'Guardando tu cita...' : _fase,
+            _fase.isEmpty ? 'Agendando tu cita...' : _fase,
             style:
                 const TextStyle(fontSize: 13.5, color: AppColors.textSecondary),
           ),
@@ -564,16 +572,6 @@ class _BookingDialogState extends State<BookingDialog> {
               style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
             ),
           ],
-          const SizedBox(height: 12),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 24),
-            child: Text(
-              'Si algo falla te avisamos aqui mismo, la ventana no se queda '
-              'trabada.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: AppColors.textMuted),
-            ),
-          ),
         ],
       ),
     );
@@ -866,10 +864,16 @@ class _BookingDialogState extends State<BookingDialog> {
           initialValue: _metodo,
           decoration: const InputDecoration(labelText: 'Metodo de pago'),
           items: [
-            for (final m in [MetodoPago.pagoMovil, MetodoPago.transferencia])
+            for (final m in MetodoPago.values)
               DropdownMenuItem(value: m, child: Text(m.label)),
           ],
-          onChanged: (v) => setState(() => _metodo = v ?? MetodoPago.pagoMovil),
+          onChanged: (v) => setState(() {
+            _metodo = v ?? MetodoPago.pagoMovil;
+            // Al cambiar de metodo se limpia lo que ya no aplica.
+            if (_esEfectivo) {
+              _errorEnvio = null;
+            }
+          }),
         ),
         const SizedBox(height: 18),
         Container(
@@ -884,9 +888,11 @@ class _BookingDialogState extends State<BookingDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                _metodo == MetodoPago.pagoMovil
-                    ? 'Datos para el pago movil'
-                    : 'Datos para la transferencia',
+                switch (_metodo) {
+                  MetodoPago.pagoMovil => 'Datos para el pago movil',
+                  MetodoPago.transferencia => 'Datos para la transferencia',
+                  MetodoPago.efectivo => 'Pagas al llegar al consultorio',
+                },
                 style: const TextStyle(
                     fontWeight: FontWeight.bold, color: AppColors.primaryDark),
               ),
@@ -897,10 +903,16 @@ class _BookingDialogState extends State<BookingDialog> {
                 _linea('Banco', _config.bancoReceptor),
                 _linea('Telefono', _config.telefonoPagoMovil),
                 _linea('Cedula/RIF', _config.cedulaReceptor),
-              ] else ...[
+              ] else if (_metodo == MetodoPago.transferencia) ...[
                 _linea('Banco', _config.bancoReceptor),
                 _linea('Cuenta', _config.numeroCuenta),
                 _linea('RIF', _config.rif),
+              ] else ...[
+                const Text(
+                  'Cancelas el monto en la consulta el dia de la cita. No hace '
+                  'falta que adjuntes ningun comprobante ahora.',
+                  style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                ),
               ],
               const Divider(height: 24),
               _bloqueTotal(),
@@ -1012,6 +1024,9 @@ class _BookingDialogState extends State<BookingDialog> {
   // ------------------------------------------------------------- paso 3
 
   Widget _formularioPago() {
+    if (_esEfectivo) {
+      return Form(key: _formPago, child: _confirmacionEfectivo());
+    }
     return Form(
       key: _formPago,
       child: Column(
@@ -1037,12 +1052,29 @@ class _BookingDialogState extends State<BookingDialog> {
           TextFormField(
             controller: _referencia,
             keyboardType: TextInputType.number,
+            maxLength: 6,
+            // El teclado ya no deja escribir nada que no sean digitos, y a los
+            // seis deja de aceptar. Antes entraban letras, espacios y
+            // referencias de largo cualquiera, y la secretaria tenia que
+            // adivinar cual era el numero al cotejar con el banco.
+            inputFormatters: <TextInputFormatter>[
+              FilteringTextInputFormatter.digitsOnly,
+            ],
             decoration: const InputDecoration(
-                labelText: 'Referencia bancaria',
-                helperText: 'Los ultimos 6 digitos'),
-            validator: (v) => (v == null || v.trim().length < 4)
-                ? 'Ingresa la referencia'
-                : null,
+              labelText: 'Referencia bancaria',
+              helperText: 'Los ultimos 6 digitos',
+              counterText: '',
+            ),
+            validator: (v) {
+              final texto = (v ?? '').trim();
+              if (texto.isEmpty) {
+                return 'Ingresa la referencia';
+              }
+              if (texto.length != 6) {
+                return 'Deben ser exactamente 6 digitos';
+              }
+              return null;
+            },
           ),
           const SizedBox(height: 14),
           TextFormField(
@@ -1086,6 +1118,75 @@ class _BookingDialogState extends State<BookingDialog> {
           _selectorComprobante(),
         ],
       ),
+    );
+  }
+
+  /// Paso 3 cuando se paga en efectivo: no hay nada que registrar, solo
+  /// confirmar. El pago queda pendiente hasta que la secretaria lo cobre.
+  Widget _confirmacionEfectivo() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 8),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.primarySoft.withValues(alpha: 0.6),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.payments_outlined,
+                      color: AppColors.primaryDark, size: 20),
+                  SizedBox(width: 9),
+                  Text('Pago en efectivo',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primaryDark)),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _linea('Paciente', _paciente.text.trim()),
+              _linea('Fecha',
+                  DateFormat("d 'de' MMMM", 'es').format(widget.appointmentDateTime)),
+              _linea('Hora', widget.timeString),
+              const Divider(height: 24),
+              _bloqueTotal(),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.warningSoft,
+            borderRadius: BorderRadius.circular(10),
+            border:
+                Border.all(color: AppColors.warning.withValues(alpha: 0.45)),
+          ),
+          child: const Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.info_outline, color: AppColors.warning, size: 20),
+              SizedBox(width: 11),
+              Expanded(
+                child: Text(
+                  'Tu cita queda apartada y el pago se registra como pendiente. '
+                  'Cancela el monto en el consultorio el dia de la consulta.',
+                  style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 

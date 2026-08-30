@@ -31,6 +31,7 @@ class AppointmentModel extends AppointmentEntity {
     super.pagoTelefono,
     super.pagoComprobanteUrl,
     super.pagoMotivoRechazo,
+    super.respuestaRecordatorio,
   });
 
   factory AppointmentModel.fromEntity(AppointmentEntity e) => AppointmentModel(
@@ -58,6 +59,7 @@ class AppointmentModel extends AppointmentEntity {
         pagoTelefono: e.pagoTelefono,
         pagoComprobanteUrl: e.pagoComprobanteUrl,
         pagoMotivoRechazo: e.pagoMotivoRechazo,
+        respuestaRecordatorio: e.respuestaRecordatorio,
       );
 
   factory AppointmentModel.fromJson(Map<String, dynamic> json, String id) {
@@ -93,6 +95,7 @@ class AppointmentModel extends AppointmentEntity {
       pagoTelefono: json['pagoTelefono'] as String?,
       pagoComprobanteUrl: json['pagoComprobanteUrl'] as String?,
       pagoMotivoRechazo: json['pagoMotivoRechazo'] as String?,
+      respuestaRecordatorio: json['respuestaRecordatorio'] as String?,
     );
   }
 

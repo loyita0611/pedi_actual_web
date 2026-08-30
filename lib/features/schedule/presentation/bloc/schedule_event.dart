@@ -10,10 +10,15 @@ sealed class ScheduleEvent extends Equatable {
 }
 
 class LoadAppointmentsForDate extends ScheduleEvent {
-  const LoadAppointmentsForDate(this.date);
+  const LoadAppointmentsForDate(this.date, {this.esPersonal = false});
   final DateTime date;
+
+  /// Decide cuanta informacion del dia se puede pedir: la agenda completa o
+  /// solo los horarios ocupados.
+  final bool esPersonal;
+
   @override
-  List<Object?> get props => [date];
+  List<Object?> get props => [date, esPersonal];
 }
 
 class BookNewAppointment extends ScheduleEvent {

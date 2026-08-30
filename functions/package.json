@@ -1,0 +1,18 @@
+{
+  "name": "pediactual-functions",
+  "description": "Correos transaccionales de PediActual, enviados desde el servidor.",
+  "main": "index.js",
+  "private": true,
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "serve": "firebase emulators:start --only functions",
+    "logs": "firebase functions:log"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.0",
+    "firebase-functions": "^7.3.2",
+    "nodemailer": "^6.9.0"
+  }
+}

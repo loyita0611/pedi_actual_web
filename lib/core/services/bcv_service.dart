@@ -8,7 +8,8 @@ import 'package:http/http.dart' as http;
 
 @immutable
 class TasaBcv {
-  const TasaBcv({required this.valor, required this.fecha, required this.origen});
+  const TasaBcv(
+      {required this.valor, required this.fecha, required this.origen});
 
   final double valor;
   final DateTime fecha;
@@ -54,7 +55,8 @@ class BcvService {
         final data = json.decode(res.body) as Map<String, dynamic>;
         final valor = (data['promedio'] as num?)?.toDouble();
         if (valor != null && valor > 0) {
-          final tasa = TasaBcv(valor: valor, fecha: DateTime.now(), origen: 'api');
+          final tasa =
+              TasaBcv(valor: valor, fecha: DateTime.now(), origen: 'api');
           // Guardado del respaldo en segundo plano: no debe frenar la reserva.
           _guardarRespaldo(tasa).ignore();
           return tasa;

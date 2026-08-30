@@ -44,32 +44,41 @@ class _ContactoPageState extends State<ContactoPage> {
               children: [
                 const Text('Contacto',
                     style: TextStyle(
-                        fontSize: 26, fontWeight: FontWeight.bold, color: AppColors.primary)),
+                        fontSize: 26,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primary)),
                 const SizedBox(height: 6),
                 const Text('Comunicate con nuestro personal administrativo.',
-                    style: TextStyle(fontSize: 14, color: AppColors.textSecondary)),
+                    style: TextStyle(
+                        fontSize: 14, color: AppColors.textSecondary)),
                 const SizedBox(height: 24),
                 Card(
                   child: Column(
                     children: [
                       ListTile(
-                        leading: const Icon(Icons.location_on_outlined, color: AppColors.primary),
-                        title: const Text('Ubicacion',
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14.5)),
+                        leading: const Icon(Icons.location_on_outlined,
+                            color: AppColors.primary),
+                        title: const Text('Ubicación',
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 14.5)),
                         subtitle: Text(c.direccion),
                       ),
                       const Divider(height: 1),
                       ListTile(
-                        leading: const Icon(Icons.phone_android_outlined, color: AppColors.primary),
+                        leading: const Icon(Icons.phone_android_outlined,
+                            color: AppColors.primary),
                         title: const Text('Telefono / WhatsApp',
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14.5)),
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 14.5)),
                         subtitle: SelectableText(c.telefonoClinica),
                       ),
                       const Divider(height: 1),
                       ListTile(
-                        leading: const Icon(Icons.access_time, color: AppColors.primary),
+                        leading: const Icon(Icons.access_time,
+                            color: AppColors.primary),
                         title: const Text('Horario de consultas',
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14.5)),
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 14.5)),
                         subtitle: Text(
                           '$habiles: ${hora(c.horaInicio)} - ${hora(c.horaFin)}\n'
                           'Almuerzo: ${hora(c.almuerzoInicio)} - ${hora(c.almuerzoFin)}',
@@ -100,8 +109,10 @@ class CarteleraPage extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text('Cartelera informativa',
-                style:
-                    TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: AppColors.primary)),
+                style: TextStyle(
+                    fontSize: 26,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.primary)),
             const SizedBox(height: 6),
             const Text('Novedades y jornadas medicas de PediActual.',
                 style: TextStyle(fontSize: 14, color: AppColors.textSecondary)),
@@ -112,22 +123,24 @@ class CarteleraPage extends StatelessWidget {
               decoration: BoxDecoration(
                 color: AppColors.primarySoft,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
+                border: Border.all(
+                    color: AppColors.primary.withValues(alpha: 0.25)),
               ),
               child: Row(
                 children: [
                   Container(
                     padding: const EdgeInsets.all(12),
-                    decoration:
-                        const BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
-                    child: const Icon(Icons.campaign, color: Colors.white, size: 28),
+                    decoration: const BoxDecoration(
+                        color: AppColors.primary, shape: BoxShape.circle),
+                    child: const Icon(Icons.campaign,
+                        color: Colors.white, size: 28),
                   ),
                   const SizedBox(width: 20),
                   const Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Jornada especial de nino sano',
+                        Text('Jornada especial de niño sano',
                             style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
@@ -137,7 +150,9 @@ class CarteleraPage extends StatelessWidget {
                           'Este mes contamos con 10% de descuento en controles preventivos. '
                           'Recuerda reportar tus pagos a tasa oficial BCV.',
                           style: TextStyle(
-                              fontSize: 14, color: AppColors.textSecondary, height: 1.4),
+                              fontSize: 14,
+                              color: AppColors.textSecondary,
+                              height: 1.4),
                         ),
                       ],
                     ),

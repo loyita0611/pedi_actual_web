@@ -72,6 +72,25 @@ class ClinicConfig {
     feriados: <String>[],
   );
 
+  /// Primer dia habil desde [desde] inclusive.
+  ///
+  /// Existe por un fallo concreto: los selectores de fecha abrian en "hoy" con
+  /// un `selectableDayPredicate` que rechaza los dias no habiles, y Flutter
+  /// tiene un assert que exige que la fecha inicial sea seleccionable. Abrir la
+  /// agenda un domingo tumbaba el dialogo y dejaba la pantalla en blanco.
+  DateTime proximoDiaHabil(DateTime desde) {
+    var d = DateTime(desde.year, desde.month, desde.day);
+    // El tope evita un bucle infinito si la configuracion queda sin dias
+    // habiles o con un feriado por delante muy largo.
+    for (var i = 0; i < 366; i++) {
+      if (esDiaHabil(d)) {
+        return d;
+      }
+      d = d.add(const Duration(days: 1));
+    }
+    return DateTime(desde.year, desde.month, desde.day);
+  }
+
   bool esDiaHabil(DateTime dia) {
     if (!diasHabiles.contains(dia.weekday)) return false;
     return !feriados.contains(claveFecha(dia));

@@ -29,6 +29,11 @@ class ScheduleBloc extends Bloc<ScheduleEvent, ScheduleState> {
 
   DateTime _ultimaFecha = DateTime.now();
 
+  /// Se recuerda del ultimo `LoadAppointmentsForDate` para que las recargas
+  /// posteriores -tras reservar, cancelar o reprogramar- pidan lo mismo que
+  /// pidio la pantalla y no mas de lo permitido.
+  bool _esPersonal = false;
+
   ScheduleLoaded? get _cargadoActual => switch (state) {
         ScheduleLoaded s => s,
         ScheduleError e => e.previo,
@@ -37,9 +42,10 @@ class ScheduleBloc extends Bloc<ScheduleEvent, ScheduleState> {
 
   Future<void> _onLoad(LoadAppointmentsForDate event, Emitter<ScheduleState> emit) async {
     _ultimaFecha = event.date;
+    _esPersonal = event.esPersonal;
     emit(const ScheduleLoading());
     try {
-      final citas = await getAppointmentsByDate(event.date);
+      final citas = await getAppointmentsByDate(event.date, esPersonal: _esPersonal);
       emit(ScheduleLoaded(appointments: citas, selectedDate: event.date));
     } catch (e) {
       emit(ScheduleError(_limpiar(e), previo: _cargadoActual));
@@ -51,7 +57,7 @@ class ScheduleBloc extends Bloc<ScheduleEvent, ScheduleState> {
     emit(const ScheduleWorking('Guardando la cita...'));
     try {
       await bookAppointment(event.appointment);
-      final citas = await getAppointmentsByDate(fecha);
+      final citas = await getAppointmentsByDate(fecha, esPersonal: _esPersonal);
       emit(ScheduleLoaded(
         appointments: citas,
         selectedDate: fecha,
@@ -71,7 +77,7 @@ class ScheduleBloc extends Bloc<ScheduleEvent, ScheduleState> {
     try {
       await cancelAppointment(event.appointment, esPersonal: event.esPersonal);
       final fecha = event.appointment.appointmentDateTime;
-      final citas = await getAppointmentsByDate(fecha);
+      final citas = await getAppointmentsByDate(fecha, esPersonal: _esPersonal);
       emit(ScheduleLoaded(
         appointments: citas,
         selectedDate: fecha,
@@ -89,7 +95,7 @@ class ScheduleBloc extends Bloc<ScheduleEvent, ScheduleState> {
       await rescheduleAppointment(event.appointment, event.nuevaFecha);
       // Se carga el dia NUEVO, no el viejo: antes la cita parecia desaparecer
       // porque se recargaba la fecha de origen.
-      final citas = await getAppointmentsByDate(event.nuevaFecha);
+      final citas = await getAppointmentsByDate(event.nuevaFecha, esPersonal: _esPersonal);
       emit(ScheduleLoaded(
         appointments: citas,
         selectedDate: event.nuevaFecha,
@@ -102,7 +108,7 @@ class ScheduleBloc extends Bloc<ScheduleEvent, ScheduleState> {
 
   Future<void> _recargarSilencioso(DateTime fecha, Emitter<ScheduleState> emit) async {
     try {
-      final citas = await getAppointmentsByDate(fecha);
+      final citas = await getAppointmentsByDate(fecha, esPersonal: _esPersonal);
       emit(ScheduleLoaded(appointments: citas, selectedDate: fecha));
     } catch (_) {
       // Si tampoco se puede recargar, se deja el error ya emitido.

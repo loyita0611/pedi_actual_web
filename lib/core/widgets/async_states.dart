@@ -31,7 +31,8 @@ class EstadoVacio extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icono, size: 56, color: AppColors.textMuted.withValues(alpha: 0.55)),
+            Icon(icono,
+                size: 56, color: AppColors.textMuted.withValues(alpha: 0.55)),
             const SizedBox(height: 16),
             Text(
               titulo,
@@ -47,7 +48,8 @@ class EstadoVacio extends StatelessWidget {
               Text(
                 detalle!,
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 13.5, color: AppColors.textMuted),
+                style:
+                    const TextStyle(fontSize: 13.5, color: AppColors.textMuted),
               ),
             ],
             if (accion != null) ...[const SizedBox(height: 20), accion!],
@@ -67,7 +69,8 @@ class EstadoError extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final texto = error?.toString() ?? 'Error desconocido';
-    final faltaIndice = texto.contains('failed-precondition') || texto.contains('requires an index');
+    final faltaIndice = texto.contains('failed-precondition') ||
+        texto.contains('requires an index');
 
     return Center(
       child: Padding(
@@ -79,8 +82,11 @@ class EstadoError extends StatelessWidget {
             const Icon(Icons.error_outline, size: 52, color: AppColors.danger),
             const SizedBox(height: 14),
             const Text(
-              'No se pudo cargar la informacion',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.danger),
+              'No se pudo cargar la información',
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.danger),
             ),
             const SizedBox(height: 8),
             Text(
@@ -89,7 +95,8 @@ class EstadoError extends StatelessWidget {
                       '"firebase deploy --only firestore:indexes" y vuelve a intentar.'
                   : texto,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+              style:
+                  const TextStyle(fontSize: 13, color: AppColors.textSecondary),
             ),
             if (onReintentar != null) ...[
               const SizedBox(height: 18),
@@ -119,7 +126,9 @@ class CargandoCentrado extends StatelessWidget {
           const CircularProgressIndicator(color: AppColors.primary),
           if (mensaje != null) ...[
             const SizedBox(height: 14),
-            Text(mensaje!, style: const TextStyle(color: AppColors.textSecondary, fontSize: 13.5)),
+            Text(mensaje!,
+                style: const TextStyle(
+                    color: AppColors.textSecondary, fontSize: 13.5)),
           ],
         ],
       ),
@@ -150,7 +159,8 @@ class ColeccionView<T> extends StatelessWidget {
       stream: stream,
       builder: (context, snapshot) {
         if (snapshot.hasError) return EstadoError(error: snapshot.error);
-        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData) {
           return cargando ?? const CargandoCentrado();
         }
         if (!snapshot.hasData) return vacio;

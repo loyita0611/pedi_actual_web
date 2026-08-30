@@ -86,6 +86,12 @@ class PaymentReceiptViewer extends StatelessWidget {
                     child: Image.network(
                       url,
                       fit: BoxFit.contain,
+                      // El bucket no devuelve cabeceras CORS, asi que al
+                      // dibujar sobre el lienzo el navegador bloqueaba la
+                      // descarga y la captura salia siempre rota. Pintarla como
+                      // <img> del navegador la muestra igual, sin depender de
+                      // la configuracion CORS del bucket.
+                      webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
                       loadingBuilder: (context, child, progress) => progress == null
                           ? child
                           : const Center(child: CircularProgressIndicator(color: Colors.white70)),
@@ -98,6 +104,9 @@ class PaymentReceiptViewer extends StatelessWidget {
                             SizedBox(height: 12),
                             Text('No se pudo cargar la imagen.',
                                 style: TextStyle(color: Colors.white70)),
+                            SizedBox(height: 6),
+                            Text('Abrela en una pestana nueva con el boton de arriba.',
+                                style: TextStyle(color: Colors.white38, fontSize: 12.5)),
                           ],
                         ),
                       ),

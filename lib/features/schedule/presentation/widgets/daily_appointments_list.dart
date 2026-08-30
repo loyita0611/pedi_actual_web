@@ -99,10 +99,34 @@ class DailyAppointmentsList extends StatelessWidget {
                             style: const TextStyle(fontSize: 11),
                             overflow: TextOverflow.ellipsis,
                           ),
-                          trailing: Text(
-                            DateFormat('h:mm a').format(a.appointmentDateTime),
-                            style: const TextStyle(
-                                color: AppColors.primary, fontWeight: FontWeight.bold, fontSize: 12),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // Lo que contesto el representante al
+                              // recordatorio de la vispera. Le ahorra a la
+                              // secretaria la llamada de la manana para saber
+                              // quien viene.
+                              if (a.confirmoAsistencia)
+                                const Tooltip(
+                                  message: 'Confirmo que asistira',
+                                  child: Icon(Icons.check_circle,
+                                      size: 16, color: AppColors.success),
+                                )
+                              else if (a.pidioReprogramar)
+                                const Tooltip(
+                                  message: 'Pidio reprogramar',
+                                  child: Icon(Icons.event_repeat,
+                                      size: 16, color: AppColors.warning),
+                                ),
+                              const SizedBox(width: 6),
+                              Text(
+                                DateFormat('h:mm a').format(a.appointmentDateTime),
+                                style: const TextStyle(
+                                    color: AppColors.primary,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12),
+                              ),
+                            ],
                           ),
                         );
                       },

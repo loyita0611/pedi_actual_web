@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/widgets/verificacion_correo_dialog.dart';
 import '../../../../injection_container.dart' as di;
 import '../../../prescriptions/presentation/pages/my_prescriptions_page.dart';
 import '../../../secretary/presentation/pages/secretary_dashboard_page.dart';
@@ -93,7 +94,8 @@ class MainLayoutPage extends StatefulWidget {
 class _MainLayoutPageState extends State<MainLayoutPage> {
   late AppSection _seccion;
 
-  List<AppSection> get _permitidas => kSeccionesPorRol[widget.currentUser.role]!;
+  List<AppSection> get _permitidas =>
+      kSeccionesPorRol[widget.currentUser.role]!;
 
   @override
   void initState() {
@@ -107,9 +109,12 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
   Future<void> _restaurar() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      if (prefs.getString('selected_page_role') != widget.currentUser.role.name) return;
+      if (prefs.getString('selected_page_role') != widget.currentUser.role.name) {
+        return;
+      }
 
-      final guardada = AppSection.porClave(prefs.getString('selected_page_index'));
+      final guardada =
+          AppSection.porClave(prefs.getString('selected_page_index'));
       if (guardada != null && _permitidas.contains(guardada) && mounted) {
         setState(() => _seccion = guardada);
       }
@@ -144,7 +149,8 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancelar', style: TextStyle(color: AppColors.textMuted)),
+            child: const Text('Cancelar',
+                style: TextStyle(color: AppColors.textMuted)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.danger),
@@ -159,6 +165,9 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('selected_page_index');
     await prefs.remove('selected_page_role');
+    // Sin esto, el siguiente que entre en el mismo navegador heredaria la
+    // verificacion del anterior y veria las recetas sin pasar por el codigo.
+    VerificacionCorreoDialog.olvidar();
     await FirebaseAuth.instance.signOut();
   }
 
@@ -167,22 +176,33 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
 
     return switch (_seccion) {
       AppSection.agenda => BlocProvider(
-          create: (_) => di.sl<ScheduleBloc>()..add(LoadAppointmentsForDate(DateTime.now())),
+          create: (_) => di.sl<ScheduleBloc>()
+            ..add(LoadAppointmentsForDate(DateTime.now(),
+                esPersonal: esPersonal)),
           child: SchedulePage(esPersonal: esPersonal),
         ),
       AppSection.misCitas => const MisCitasPage(),
       AppSection.misPagos => const MisPagosPage(),
-      AppSection.misRecetas => const MyPrescriptionsPage(),
+      // Las recetas llevan datos medicos: se pide un codigo al correo antes
+      // de mostrarlas, y no se vuelve a pedir en la misma sesion.
+      AppSection.misRecetas => const ProtegidoPorCodigo(
+          proposito: PropositoCodigo.recetas,
+          mensajeBloqueado:
+              'Para ver e imprimir las recetas hay que verificar tu correo.',
+          child: MyPrescriptionsPage(),
+        ),
       AppSection.informacion => const CarteleraPage(),
       AppSection.contacto => const ContactoPage(),
       AppSection.panelSecretaria => const SecretaryDashboardScreen(),
       AppSection.pacientes => const Scaffold(
           backgroundColor: AppColors.background,
-          body: Padding(padding: EdgeInsets.all(32), child: PatientDirectoryWidget()),
+          body: Padding(
+              padding: EdgeInsets.all(32), child: PatientDirectoryWidget()),
         ),
       AppSection.recetas => const Scaffold(
           backgroundColor: AppColors.background,
-          body: Padding(padding: EdgeInsets.all(32), child: UploadPrescriptionWidget()),
+          body: Padding(
+              padding: EdgeInsets.all(32), child: UploadPrescriptionWidget()),
         ),
       AppSection.ajustes => const AjustesPage(),
     };
@@ -200,7 +220,9 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
             body: Row(
               children: [
                 SizedBox(width: 260, child: _menu()),
-                Expanded(child: ColoredBox(color: AppColors.background, child: _pantalla())),
+                Expanded(
+                    child: ColoredBox(
+                        color: AppColors.background, child: _pantalla())),
               ],
             ),
           );
@@ -211,10 +233,14 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
             foregroundColor: Colors.white,
             title: const Row(
               children: [
-                Text('pedi', style: TextStyle(fontWeight: FontWeight.w300, fontSize: 22)),
+                Text('pedi',
+                    style:
+                        TextStyle(fontWeight: FontWeight.w300, fontSize: 22)),
                 Text('actual',
                     style: TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 22, color: AppColors.accent)),
+                        fontWeight: FontWeight.bold,
+                        fontSize: 22,
+                        color: AppColors.accent)),
               ],
             ),
           ),
@@ -238,10 +264,15 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
             child: Row(
               children: [
                 Text('pedi',
-                    style: TextStyle(color: Colors.white, fontSize: 27, fontWeight: FontWeight.w300)),
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 27,
+                        fontWeight: FontWeight.w300)),
                 Text('actual',
                     style: TextStyle(
-                        color: AppColors.accent, fontSize: 27, fontWeight: FontWeight.bold)),
+                        color: AppColors.accent,
+                        fontSize: 27,
+                        fontWeight: FontWeight.bold)),
               ],
             ),
           ),
@@ -249,10 +280,12 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8)),
+              decoration: BoxDecoration(
+                  color: Colors.white, borderRadius: BorderRadius.circular(8)),
               child: Row(
                 children: [
-                  const Icon(Icons.account_circle, color: AppColors.primary, size: 20),
+                  const Icon(Icons.account_circle,
+                      color: AppColors.primary, size: 20),
                   const SizedBox(width: 9),
                   Expanded(
                     child: Column(
@@ -261,7 +294,9 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
                         Text(
                           widget.currentUser.name,
                           style: const TextStyle(
-                              fontWeight: FontWeight.bold, color: AppColors.textPrimary, fontSize: 13),
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.textPrimary,
+                              fontSize: 13),
                           overflow: TextOverflow.ellipsis,
                         ),
                         Text(
@@ -270,7 +305,8 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
                             UserRole.secretary => 'Secretaria',
                             UserRole.patient => 'Representante',
                           },
-                          style: const TextStyle(color: AppColors.textMuted, fontSize: 11),
+                          style: const TextStyle(
+                              color: AppColors.textMuted, fontSize: 11),
                         ),
                       ],
                     ),
@@ -285,8 +321,7 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
               padding: EdgeInsets.zero,
               children: [
                 for (final s in _permitidas)
-                  if (s != AppSection.ajustes)
-                    _item(s, cerrarDrawer: enDrawer),
+                  if (s != AppSection.ajustes) _item(s, cerrarDrawer: enDrawer),
               ],
             ),
           ),
@@ -305,7 +340,9 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
                     SizedBox(width: 16),
                     Text('Salir',
                         style: TextStyle(
-                            color: Colors.white, fontWeight: FontWeight.w500, fontSize: 15)),
+                            color: Colors.white,
+                            fontWeight: FontWeight.w500,
+                            fontSize: 15)),
                   ],
                 ),
               ),
@@ -337,7 +374,8 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
           ),
           child: Row(
             children: [
-              Icon(icono, color: activo ? AppColors.primary : Colors.white, size: 21),
+              Icon(icono,
+                  color: activo ? AppColors.primary : Colors.white, size: 21),
               const SizedBox(width: 16),
               Expanded(
                 child: Text(
@@ -359,16 +397,21 @@ class _MainLayoutPageState extends State<MainLayoutPage> {
   (IconData, String) _etiqueta(AppSection s) => switch (s) {
         AppSection.agenda => (
             Icons.edit_calendar_outlined,
-            widget.currentUser.role == UserRole.patient ? 'Agendar cita' : 'Agenda'
+            widget.currentUser.role == UserRole.patient
+                ? 'Agendar cita'
+                : 'Agenda'
           ),
         AppSection.misCitas => (Icons.event_note_outlined, 'Mis citas'),
         AppSection.misPagos => (Icons.payment_outlined, 'Mis pagos'),
         AppSection.misRecetas => (Icons.medication_outlined, 'Mis recetas'),
-        AppSection.informacion => (Icons.info_outline, 'Informacion'),
+        AppSection.informacion => (Icons.info_outline, 'Información'),
         AppSection.contacto => (Icons.contact_phone_outlined, 'Contacto'),
-        AppSection.panelSecretaria => (Icons.dashboard_outlined, 'Panel de control'),
+        AppSection.panelSecretaria => (
+            Icons.dashboard_outlined,
+            'Panel de control'
+          ),
         AppSection.pacientes => (Icons.people_outline, 'Pacientes'),
         AppSection.recetas => (Icons.upload_file, 'Recetas y documentos'),
-        AppSection.ajustes => (Icons.settings_outlined, 'Configuracion'),
+        AppSection.ajustes => (Icons.settings_outlined, 'Configuración'),
       };
 }

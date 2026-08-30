@@ -7,9 +7,7 @@ import 'package:intl/intl.dart';
 
 import '../../../../core/config/clinic_config.dart';
 import '../../../../core/constants/app_colors.dart';
-import '../../../../core/services/email_service.dart';
 import '../../../../core/widgets/async_states.dart';
-import '../../../../injection_container.dart' as di;
 import '../../domain/entities/appointment_entity.dart';
 import '../bloc/schedule_bloc.dart';
 import '../bloc/schedule_event.dart';
@@ -48,7 +46,8 @@ class _SchedulePageState extends State<SchedulePage> {
         },
         builder: (context, state) {
           if (state is ScheduleInitial) {
-            context.read<ScheduleBloc>().add(LoadAppointmentsForDate(_dia));
+            context.read<ScheduleBloc>().add(
+                LoadAppointmentsForDate(_dia, esPersonal: widget.esPersonal));
             return const CargandoCentrado();
           }
           if (state is ScheduleWorking) return CargandoCentrado(mensaje: state.mensaje);
@@ -65,7 +64,8 @@ class _SchedulePageState extends State<SchedulePage> {
           if (cargado == null) {
             return EstadoError(
               error: state is ScheduleError ? state.message : 'No se pudo cargar la agenda',
-              onReintentar: () => context.read<ScheduleBloc>().add(LoadAppointmentsForDate(_dia)),
+              onReintentar: () => context.read<ScheduleBloc>().add(
+                  LoadAppointmentsForDate(_dia, esPersonal: widget.esPersonal)),
             );
           }
 
@@ -184,7 +184,9 @@ class _SchedulePageState extends State<SchedulePage> {
 
   void _cambiarDia(DateTime dia) {
     setState(() => _dia = dia);
-    context.read<ScheduleBloc>().add(LoadAppointmentsForDate(dia));
+    context
+        .read<ScheduleBloc>()
+        .add(LoadAppointmentsForDate(dia, esPersonal: widget.esPersonal));
   }
 
   Future<void> _abrirReserva(String hora, DateTime cuando) async {
@@ -248,20 +250,9 @@ class _SchedulePageState extends State<SchedulePage> {
       throw ReservaFallida(resultado.message);
     }
 
-    // El correo no decide si la cita quedo guardada. Antes se esperaba aqui, y
-    // un fallo del proveedor convertia una reserva buena en un error en
-    // pantalla, con el riesgo de que el representante agendara dos veces.
-    if (cita.email.isNotEmpty) {
-      unawaited(
-        di.sl<EmailService>().confirmacionCita(
-          correo: cita.email,
-          paciente: cita.patientName,
-          fecha: DateFormat('d/MM/y').format(cita.appointmentDateTime),
-          hora: hora,
-          telefonoClinica: ClinicConfigService.actual.telefonoClinica,
-        ),
-      );
-    }
+    // El correo de confirmacion lo dispara una funcion del servidor al ver la
+    // cita nueva en Firestore. Asi no puede salir el aviso de una cita que no
+    // llego a guardarse, y las credenciales del correo no viajan al navegador.
     return true;
   }
 }

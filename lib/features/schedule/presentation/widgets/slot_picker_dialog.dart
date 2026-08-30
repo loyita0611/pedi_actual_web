@@ -1,13 +1,14 @@
 // lib/features/schedule/presentation/widgets/slot_picker_dialog.dart
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../../../core/config/clinic_config.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/widgets/async_states.dart';
-import '../../data/models/appointment_model.dart';
+import '../../../../injection_container.dart' as di;
 import '../../domain/entities/appointment_entity.dart';
+import '../../domain/repositories/appointment_repository.dart';
+import '../../domain/usecases/get_appointments_by_date.dart';
 import 'time_slot_helper.dart';
 
 /// Selector de horario reutilizable.
@@ -59,30 +60,36 @@ class _SlotPickerDialogState extends State<SlotPickerDialog> {
     final base = widget.fechaInicial.isBefore(DateTime(hoy.year, hoy.month, hoy.day))
         ? hoy
         : widget.fechaInicial;
-    _fecha = DateTime(base.year, base.month, base.day);
+    // Se arranca en el primer dia habil: abrir en un domingo hacia que el
+    // selector de fecha reventara contra su propio assert.
+    _fecha = ClinicConfigService.actual.proximoDiaHabil(base);
     _futuro = _cargar(_fecha);
   }
 
+  /// Lee la disponibilidad publicada por el servidor en vez de la agenda.
+  ///
+  /// Este dialogo lo abre tanto la secretaria como el representante cuando
+  /// reprograma, y el segundo no puede listar las citas del dia: traeria las
+  /// de otras familias y Firestore rechaza la consulta entera.
   Future<List<AppointmentEntity>> _cargar(DateTime dia) async {
-    final inicio = DateTime(dia.year, dia.month, dia.day);
-    final fin = DateTime(dia.year, dia.month, dia.day, 23, 59, 59, 999);
-    final snap = await FirebaseFirestore.instance
-        .collection('citas')
-        .where('appointmentDateTime', isGreaterThanOrEqualTo: Timestamp.fromDate(inicio))
-        .where('appointmentDateTime', isLessThanOrEqualTo: Timestamp.fromDate(fin))
-        .get();
-    return snap.docs.map((d) => AppointmentModel.fromJson(d.data(), d.id)).toList();
+    final ocupados = await di.sl<AppointmentRepository>().getOcupadosByDate(dia);
+    return ocupados.map(GetAppointmentsByDate.marcadorDeOcupado).toList();
   }
 
   Future<void> _elegirFecha() async {
     final hoy = DateTime.now();
+    final config = ClinicConfigService.actual;
+    // Flutter exige que la fecha inicial pase el filtro de dias seleccionables.
+    final inicial = config.proximoDiaHabil(
+      _fecha.isBefore(hoy) ? hoy : _fecha,
+    );
     final elegida = await showDatePicker(
       context: context,
-      initialDate: _fecha,
+      initialDate: inicial,
       // Ya no se puede retroceder un ano: solo de hoy en adelante.
       firstDate: DateTime(hoy.year, hoy.month, hoy.day),
       lastDate: hoy.add(const Duration(days: 365)),
-      selectableDayPredicate: (d) => ClinicConfigService.actual.esDiaHabil(d),
+      selectableDayPredicate: config.esDiaHabil,
       builder: (context, child) => Theme(
         data: Theme.of(context).copyWith(
           colorScheme: const ColorScheme.light(

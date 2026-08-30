@@ -29,6 +29,7 @@ class AppointmentEntity extends Equatable {
     this.pagoTelefono,
     this.pagoComprobanteUrl,
     this.pagoMotivoRechazo,
+    this.respuestaRecordatorio,
     this.ordenesPendientes = 0,
   });
 
@@ -70,6 +71,14 @@ class AppointmentEntity extends Equatable {
   /// Captura de la transferencia o del pago movil.
   final String? pagoComprobanteUrl;
   final String? pagoMotivoRechazo;
+
+  /// Que contesto el representante al recordatorio de la vispera:
+  /// `confirmada`, `reprogramar` o `cancelada`. Lo escribe el servidor cuando
+  /// la persona pulsa en el correo, asi que la aplicacion solo lo lee.
+  final String? respuestaRecordatorio;
+
+  bool get confirmoAsistencia => respuestaRecordatorio == 'confirmada';
+  bool get pidioReprogramar => respuestaRecordatorio == 'reprogramar';
 
   /// Cuantas indicaciones de la doctora siguen sin resolver.
   /// No se persiste: lo calcula el servicio de ordenes al armar el historial.
@@ -116,6 +125,7 @@ class AppointmentEntity extends Equatable {
     String? pagoTelefono,
     String? pagoComprobanteUrl,
     String? pagoMotivoRechazo,
+    String? respuestaRecordatorio,
     int? ordenesPendientes,
   }) {
     return AppointmentEntity(
@@ -143,6 +153,8 @@ class AppointmentEntity extends Equatable {
       pagoTelefono: pagoTelefono ?? this.pagoTelefono,
       pagoComprobanteUrl: pagoComprobanteUrl ?? this.pagoComprobanteUrl,
       pagoMotivoRechazo: pagoMotivoRechazo ?? this.pagoMotivoRechazo,
+      respuestaRecordatorio:
+          respuestaRecordatorio ?? this.respuestaRecordatorio,
       ordenesPendientes: ordenesPendientes ?? this.ordenesPendientes,
     );
   }
@@ -175,6 +187,7 @@ class AppointmentEntity extends Equatable {
         pagoTelefono,
         pagoComprobanteUrl,
         pagoMotivoRechazo,
+        respuestaRecordatorio,
         ordenesPendientes,
       ];
 }

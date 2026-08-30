@@ -7,7 +7,6 @@ import 'package:intl/intl.dart';
 import '../../../../core/config/clinic_config.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_status.dart';
-import '../../../../core/services/email_service.dart';
 import '../../../../core/utils/search_utils.dart';
 import '../../../../core/widgets/async_states.dart';
 import '../../../../injection_container.dart' as di;
@@ -127,16 +126,7 @@ class _CreateAppointmentDialogState extends State<CreateAppointmentDialog> {
 
       await di.sl<BookAppointment>()(cita);
 
-      // Ahora si se avisa al representante, si dejo correo.
-      if (_correo.text.trim().isNotEmpty) {
-        await di.sl<EmailService>().confirmacionCita(
-              correo: _correo.text.trim(),
-              paciente: _nombre.text.trim(),
-              fecha: DateFormat('d/MM/y').format(_cuando!),
-              hora: DateFormat('h:mm a').format(_cuando!),
-              telefonoClinica: ClinicConfigService.actual.telefonoClinica,
-            );
-      }
+      // El correo lo manda el servidor al ver el cambio en Firestore.
 
       if (!mounted) return;
       Navigator.pop(context);

@@ -5,7 +5,6 @@ import 'package:get_it/get_it.dart';
 
 import 'core/config/clinic_config.dart';
 import 'core/services/bcv_service.dart';
-import 'core/services/email_service.dart';
 import 'core/services/storage_service.dart';
 import 'features/orders/data/medical_order_service.dart';
 import 'features/prescriptions/data/prescription_service.dart';
@@ -28,7 +27,6 @@ Future<void> init() async {
   // ----------------------------------------------------------- servicios
   sl.registerLazySingleton<StorageService>(() => StorageService());
   sl.registerLazySingleton<BcvService>(() => BcvService(firestore: sl()));
-  sl.registerLazySingleton<EmailService>(() => EmailService());
   sl.registerLazySingleton<ClinicConfigService>(() => ClinicConfigService(firestore: sl()));
   sl.registerLazySingleton<MedicalOrderService>(
       () => MedicalOrderService(firestore: sl(), auth: sl()));

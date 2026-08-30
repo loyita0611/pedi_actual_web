@@ -47,12 +47,17 @@ class _NewOrderDialogState extends State<NewOrderDialog> {
 
   Future<void> _elegirFecha() async {
     final hoy = DateTime.now();
+    final config = ClinicConfigService.actual;
+    // La fecha inicial tiene que ser un dia seleccionable o Flutter revienta.
+    final inicial = config.proximoDiaHabil(
+      _fechaSugerida ?? hoy.add(const Duration(days: 15)),
+    );
     final elegida = await showDatePicker(
       context: context,
-      initialDate: _fechaSugerida ?? hoy.add(const Duration(days: 15)),
+      initialDate: inicial,
       firstDate: DateTime(hoy.year, hoy.month, hoy.day),
       lastDate: hoy.add(const Duration(days: 365)),
-      selectableDayPredicate: (d) => ClinicConfigService.actual.esDiaHabil(d),
+      selectableDayPredicate: config.esDiaHabil,
     );
     if (elegida != null && mounted) setState(() => _fechaSugerida = elegida);
   }

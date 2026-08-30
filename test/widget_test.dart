@@ -14,6 +14,8 @@ import 'package:pedia_actual/core/constants/venezuela_banks.dart';
 import 'package:pedia_actual/core/utils/search_utils.dart';
 import 'package:pedia_actual/features/schedule/data/datasources/appointment_remote_data_source.dart';
 import 'package:pedia_actual/features/schedule/domain/entities/appointment_entity.dart';
+import 'package:pedia_actual/features/schedule/domain/repositories/appointment_repository.dart';
+import 'package:pedia_actual/features/schedule/domain/usecases/get_appointments_by_date.dart';
 import 'package:pedia_actual/features/schedule/presentation/widgets/time_slot_helper.dart';
 
 AppointmentEntity _cita(DateTime cuando, {CitaStatus estado = CitaStatus.confirmada}) {
@@ -187,6 +189,27 @@ void main() {
       expect(config.esDiaHabil(lunes), isTrue);
     });
 
+    // Regresion: los selectores de fecha abrian en "hoy" con un filtro que
+    // rechaza los dias no habiles, y Flutter tiene un assert que exige que la
+    // fecha inicial sea seleccionable. Abrir la agenda un domingo tumbaba el
+    // dialogo y dejaba la pantalla en blanco.
+    test('el proximo dia habil salta el fin de semana', () {
+      const config = ClinicConfig.fallback;
+      // 30 de agosto de 2026 es domingo.
+      final domingo = DateTime(2026, 8, 30);
+      expect(config.esDiaHabil(domingo), isFalse);
+
+      final siguiente = config.proximoDiaHabil(domingo);
+      expect(config.esDiaHabil(siguiente), isTrue);
+      expect(siguiente, DateTime(2026, 8, 31));
+    });
+
+    test('el proximo dia habil deja igual un dia que ya es habil', () {
+      const config = ClinicConfig.fallback;
+      final lunes = DateTime(2026, 8, 31);
+      expect(config.proximoDiaHabil(lunes), lunes);
+    });
+
     test('un feriado bloquea el dia', () {
       final conFeriado = ClinicConfig(
         horaInicio: config.horaInicio,
@@ -208,4 +231,108 @@ void main() {
       expect(conFeriado.esDiaHabil(lunes), isFalse);
     });
   });
+
+  group('Agenda del representante', () {
+    final dia = DateTime(2026, 9, 1);
+    AppointmentEntity miCita(int hora, {CitaStatus estado = CitaStatus.pendiente}) {
+      return AppointmentEntity(
+        id: 'mia',
+        representativeId: 'uid-1',
+        patientName: 'Sofia',
+        patientBirthDate: DateTime(2020),
+        address: 'Casa',
+        representativeName: 'Jorge',
+        email: 'jorge@ejemplo.com',
+        phone: '0412',
+        appointmentDateTime: DateTime(2026, 9, 1, hora),
+        status: estado,
+      );
+    }
+
+    test('las citas ajenas llegan sin un solo dato', () async {
+      final caso = GetAppointmentsByDate(_RepositorioFalso(
+        ocupados: [DateTime(2026, 9, 1, 8), DateTime(2026, 9, 1, 9)],
+      ));
+
+      final resultado = await caso(dia);
+
+      expect(resultado.length, 2);
+      for (final cita in resultado) {
+        expect(cita.patientName, isEmpty);
+        expect(cita.representativeName, isEmpty);
+        expect(cita.email, isEmpty);
+        expect(cita.phone, isEmpty);
+      }
+    });
+
+    test('la cita propia reemplaza al marcador de su horario', () async {
+      final caso = GetAppointmentsByDate(_RepositorioFalso(
+        ocupados: [DateTime(2026, 9, 1, 8), DateTime(2026, 9, 1, 9)],
+        mias: [miCita(9)],
+      ));
+
+      final resultado = await caso(dia);
+
+      // Sigue habiendo dos bloques ocupados, no tres: no se duplica.
+      expect(resultado.length, 2);
+      expect(resultado.first.patientName, isEmpty);
+      expect(resultado.last.patientName, 'Sofia');
+      expect(resultado.last.representativeId, 'uid-1');
+    });
+
+    test('la cita propia aparece aunque el servidor no haya publicado el dia', () async {
+      // Es el caso de recien reservar: la cita ya esta escrita pero la funcion
+      // que publica la disponibilidad todavia no corrio.
+      final caso = GetAppointmentsByDate(_RepositorioFalso(mias: [miCita(10)]));
+
+      final resultado = await caso(dia);
+
+      expect(resultado.length, 1);
+      expect(resultado.single.patientName, 'Sofia');
+    });
+
+    test('una cita propia cancelada libera el horario', () async {
+      final caso = GetAppointmentsByDate(_RepositorioFalso(
+        ocupados: [DateTime(2026, 9, 1, 8)],
+        mias: [miCita(8, estado: CitaStatus.cancelada)],
+      ));
+
+      final resultado = await caso(dia);
+
+      expect(resultado, isEmpty);
+    });
+
+    test('el personal recibe la agenda completa', () async {
+      final caso = GetAppointmentsByDate(_RepositorioFalso(
+        todas: [miCita(8), miCita(9)],
+        ocupados: const [],
+      ));
+
+      final resultado = await caso(dia, esPersonal: true);
+
+      expect(resultado.length, 2);
+      expect(resultado.first.patientName, 'Sofia');
+    });
+  });
+}
+
+/// Repositorio de mentira: devuelve lo que se le ponga, sin tocar Firestore.
+class _RepositorioFalso implements AppointmentRepository {
+  _RepositorioFalso({this.ocupados = const [], this.mias = const [], this.todas = const []});
+
+  final List<DateTime> ocupados;
+  final List<AppointmentEntity> mias;
+  final List<AppointmentEntity> todas;
+
+  @override
+  Future<List<DateTime>> getOcupadosByDate(DateTime date) async => ocupados;
+
+  @override
+  Future<List<AppointmentEntity>> getMisCitasDelDia(DateTime date) async => mias;
+
+  @override
+  Future<List<AppointmentEntity>> getAppointmentsByDate(DateTime date) async => todas;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

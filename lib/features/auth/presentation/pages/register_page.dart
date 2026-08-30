@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/utils/search_utils.dart';
 import '../../../../core/widgets/async_states.dart';
+import '../../../../core/widgets/verificacion_correo_dialog.dart';
 
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
@@ -37,7 +38,8 @@ class _RegisterPageState extends State<RegisterPage> {
     setState(() => _cargando = true);
 
     try {
-      final credencial = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+      final credencial =
+          await FirebaseAuth.instance.createUserWithEmailAndPassword(
         email: _correo.text.trim(),
         password: _clave.text,
       );
@@ -46,7 +48,10 @@ class _RegisterPageState extends State<RegisterPage> {
 
       await usuario.updateDisplayName(_nombre.text.trim());
 
-      await FirebaseFirestore.instance.collection('users').doc(usuario.uid).set({
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(usuario.uid)
+          .set({
         'uid': usuario.uid,
         'name': _nombre.text.trim(),
         'nombreBusqueda': normalizarTexto(_nombre.text),
@@ -62,10 +67,35 @@ class _RegisterPageState extends State<RegisterPage> {
 
       // Si la secretaria ya habia cargado hijos con este correo, se enlazan
       // ahora para que aparezcan en su desplegable desde el primer momento.
-      await _enlazarHijosExistentes(usuario.uid, _correo.text.trim().toLowerCase());
+      await _enlazarHijosExistentes(
+          usuario.uid, _correo.text.trim().toLowerCase());
 
       if (!mounted) return;
-      mostrarAviso(context, 'Cuenta creada. Ya puedes agendar tu primera cita.', esExito: true);
+
+      // Codigo de seis digitos al correo, antes de dejar entrar. Comprueba que
+      // la direccion es suya de verdad: sin esto bastaba con registrarse
+      // usando el correo de otra familia para llegar a su historia clinica,
+      // porque las reglas de Firestore conceden acceso por coincidencia de
+      // correo a los pacientes que la secretaria cargo de antemano.
+      final verificado = await VerificacionCorreoDialog.pedir(
+        context,
+        proposito: PropositoCodigo.registro,
+      );
+
+      if (!mounted) return;
+
+      if (!verificado) {
+        // La cuenta queda creada pero sin verificar: puede entrar y hacerlo
+        // mas tarde, y mientras tanto solo ve lo suyo.
+        mostrarAviso(
+          context,
+          'Cuenta creada, pero no verificaste el correo. Podras hacerlo mas '
+          'tarde desde Ajustes.',
+        );
+      } else {
+        mostrarAviso(context, 'Listo. Ya puedes agendar tu primera cita.',
+            esExito: true);
+      }
       Navigator.pop(context);
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
@@ -100,8 +130,9 @@ class _RegisterPageState extends State<RegisterPage> {
   }
 
   static String _mensaje(String codigo) => switch (codigo) {
-        'email-already-in-use' => 'Ese correo ya esta registrado. Inicia sesion.',
-        'weak-password' => 'La contrasena debe tener al menos 6 caracteres.',
+        'email-already-in-use' =>
+          'Ese correo ya esta registrado. Inicia sesion.',
+        'weak-password' => 'La contraseña debe tener al menos 6 caracteres.',
         'invalid-email' => 'Ese correo no tiene un formato valido.',
         'network-request-failed' => 'Sin conexion. Revisa tu internet.',
         _ => 'No pudimos completar el registro.',
@@ -134,9 +165,11 @@ class _RegisterPageState extends State<RegisterPage> {
                             fontWeight: FontWeight.bold,
                             color: AppColors.primary)),
                     const SizedBox(height: 6),
-                    const Text('Crea tu cuenta para gestionar las citas de tus ninos',
+                    const Text(
+                        'Crea tu cuenta para gestionar las citas de tus ninos',
                         textAlign: TextAlign.center,
-                        style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+                        style: TextStyle(
+                            color: AppColors.textMuted, fontSize: 13)),
                     const SizedBox(height: 26),
                     TextFormField(
                       controller: _nombre,
@@ -145,8 +178,9 @@ class _RegisterPageState extends State<RegisterPage> {
                         labelText: 'Nombre y apellido',
                         prefixIcon: Icon(Icons.person_outline),
                       ),
-                      validator: (v) =>
-                          (v == null || v.trim().length < 3) ? 'Escribe tu nombre completo' : null,
+                      validator: (v) => (v == null || v.trim().length < 3)
+                          ? 'Escribe tu nombre completo'
+                          : null,
                     ),
                     const SizedBox(height: 16),
                     TextFormField(
@@ -156,8 +190,9 @@ class _RegisterPageState extends State<RegisterPage> {
                         labelText: 'Numero telefonico',
                         prefixIcon: Icon(Icons.phone_outlined),
                       ),
-                      validator: (v) =>
-                          (v == null || v.trim().length < 7) ? 'Ingresa un telefono valido' : null,
+                      validator: (v) => (v == null || v.trim().length < 7)
+                          ? 'Ingresa un telefono valido'
+                          : null,
                     ),
                     const SizedBox(height: 16),
                     TextFormField(
@@ -170,7 +205,8 @@ class _RegisterPageState extends State<RegisterPage> {
                       validator: (v) {
                         final texto = (v ?? '').trim();
                         if (texto.isEmpty) return 'Ingresa tu correo';
-                        if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(texto)) {
+                        if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+                            .hasMatch(texto)) {
                           return 'Ese correo no parece valido';
                         }
                         return null;
@@ -181,22 +217,27 @@ class _RegisterPageState extends State<RegisterPage> {
                       controller: _clave,
                       obscureText: _oculta,
                       decoration: InputDecoration(
-                        labelText: 'Contrasena',
+                        labelText: 'Contraseña',
                         helperText: 'Minimo 6 caracteres',
                         prefixIcon: const Icon(Icons.lock_outline),
                         suffixIcon: IconButton(
-                          icon: Icon(_oculta ? Icons.visibility_off : Icons.visibility, size: 20),
+                          icon: Icon(
+                              _oculta ? Icons.visibility_off : Icons.visibility,
+                              size: 20),
                           onPressed: () => setState(() => _oculta = !_oculta),
                         ),
                       ),
-                      validator: (v) => (v == null || v.length < 6) ? 'Minimo 6 caracteres' : null,
+                      validator: (v) => (v == null || v.length < 6)
+                          ? 'Minimo 6 caracteres'
+                          : null,
                     ),
                     const SizedBox(height: 26),
                     SizedBox(
                       width: double.infinity,
                       height: 50,
                       child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(backgroundColor: AppColors.accentDark),
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.accentDark),
                         onPressed: _cargando ? null : _registrar,
                         child: _cargando
                             ? const SizedBox(
@@ -204,7 +245,8 @@ class _RegisterPageState extends State<RegisterPage> {
                                 height: 20,
                                 child: CircularProgressIndicator(
                                     color: Colors.white, strokeWidth: 2.4))
-                            : const Text('Crear mi cuenta', style: TextStyle(fontSize: 15)),
+                            : const Text('Crear mi cuenta',
+                                style: TextStyle(fontSize: 15)),
                       ),
                     ),
                   ],

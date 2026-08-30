@@ -4,10 +4,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
-import '../../../../core/config/clinic_config.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_status.dart';
-import '../../../../core/services/email_service.dart';
 import '../../../../core/widgets/async_states.dart';
 import '../../../../injection_container.dart' as di;
 import '../../data/models/appointment_model.dart';
@@ -57,15 +55,47 @@ class _MisCitasPageState extends State<MisCitasPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        title: const Text('Cancelar cita', style: TextStyle(fontSize: 17)),
-        content: Text(
-          'Se cancelara la cita de ${cita.patientName} del '
-          '${DateFormat("d 'de' MMMM 'a las' h:mm a", 'es').format(cita.appointmentDateTime)}.',
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: AppColors.danger),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text('Esta seguro que desea cancelar la cita?',
+                  style: TextStyle(fontSize: 17)),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Cita de ${cita.patientName}, '
+              '${DateFormat("d 'de' MMMM 'a las' h:mm a", 'es').format(cita.appointmentDateTime)}.',
+              style: const TextStyle(fontSize: 14),
+            ),
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.dangerSoft,
+                borderRadius: BorderRadius.circular(9),
+                border:
+                    Border.all(color: AppColors.danger.withValues(alpha: 0.35)),
+              ),
+              child: const Text(
+                'Al hacerlo perdera su cita y se tendra que comunicar con el '
+                'consultorio para el reembolso del dinero.',
+                style: TextStyle(fontSize: 13, color: AppColors.danger),
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Volver', style: TextStyle(color: AppColors.textMuted)),
+            child: const Text('No, conservar mi cita',
+                style: TextStyle(color: AppColors.textMuted)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.danger),
@@ -101,15 +131,7 @@ class _MisCitasPageState extends State<MisCitasPage> {
     setState(() => _procesando = cita.id);
     try {
       await di.sl<RescheduleAppointment>()(cita, nueva);
-      if (cita.email.isNotEmpty) {
-        await di.sl<EmailService>().reprogramacion(
-              correo: cita.email,
-              paciente: cita.patientName,
-              fecha: DateFormat('d/MM/y').format(nueva),
-              hora: DateFormat('h:mm a').format(nueva),
-              telefonoClinica: ClinicConfigService.actual.telefonoClinica,
-            );
-      }
+      // El correo lo manda el servidor al ver el cambio en Firestore.
       if (mounted) {
         mostrarAviso(
           context,
@@ -282,17 +304,33 @@ class _MisCitasPageState extends State<MisCitasPage> {
           if (proxima)
             ocupado
                 ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
-                : Row(
+                // Antes eran dos iconos pegados y sin texto: nadie sabia cual
+                // era cual, y el de cancelar quedaba a un pixel del otro.
+                : Wrap(
+                    spacing: 12,
+                    runSpacing: 8,
                     children: [
-                      IconButton(
-                        tooltip: 'Reprogramar',
-                        icon: const Icon(Icons.event_repeat, color: AppColors.primary),
+                      OutlinedButton.icon(
                         onPressed: () => _reprogramar(cita),
+                        icon: const Icon(Icons.event_repeat, size: 17),
+                        label: const Text('Reprogramar'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.primary,
+                          side: const BorderSide(color: AppColors.primary),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 10),
+                        ),
                       ),
-                      IconButton(
-                        tooltip: 'Cancelar',
-                        icon: const Icon(Icons.cancel_outlined, color: AppColors.danger),
+                      OutlinedButton.icon(
                         onPressed: () => _cancelar(cita),
+                        icon: const Icon(Icons.cancel_outlined, size: 17),
+                        label: const Text('Cancelar'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.danger,
+                          side: const BorderSide(color: AppColors.danger),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 10),
+                        ),
                       ),
                     ],
                   ),

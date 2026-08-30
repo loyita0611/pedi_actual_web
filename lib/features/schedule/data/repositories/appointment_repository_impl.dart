@@ -30,6 +30,16 @@ class AppointmentRepositoryImpl implements AppointmentRepository {
       _ejecutar(() => remoteDataSource.getAppointmentsByDate(date), 'No se pudieron cargar las citas');
 
   @override
+  Future<List<DateTime>> getOcupadosByDate(DateTime date) => _ejecutar(
+      () => remoteDataSource.getOcupadosByDate(date),
+      'No se pudo consultar la disponibilidad');
+
+  @override
+  Future<List<AppointmentEntity>> getMisCitasDelDia(DateTime date) => _ejecutar(
+      () => remoteDataSource.getMisCitasDelDia(date),
+      'No se pudieron cargar tus citas del dia');
+
+  @override
   Future<List<AppointmentEntity>> getAppointmentsByRepresentative(String uid) => _ejecutar(
       () => remoteDataSource.getAppointmentsByRepresentative(uid), 'No se pudieron cargar tus citas');
 
